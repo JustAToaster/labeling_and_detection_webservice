@@ -17,8 +17,8 @@ let send_labels = () => {
     }
   };
   var img_name = document.getElementById("original_image").src.split("/").pop();
-  var model_index = document.getElementById("model_index").innerHTML;
-  xhr.send(JSON.stringify({model_index, img_name, boundingBoxes}));
+  var curr_model_pt = document.getElementById('curr_model_pt').innerHTML;
+  xhr.send(JSON.stringify({curr_model_pt, img_name, boundingBoxes}));
 
   alert("Labels sent to the server!");
   reloadAsGet();

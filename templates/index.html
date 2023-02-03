@@ -18,17 +18,39 @@
     </style>
     <link rel="stylesheet" href="/static/style.css">
 
-    <title>YOLOv5 Helmet Detection</title>
+    <title>YOLOv5 Detection</title>
   </head>
-  <h1 id="model_index" hidden>0</h1>
   <body class="text-center">
     <form class="form-signin" method=post enctype=multipart/form-data>
         <img class="mb-4" src="/static/pytorch.png" alt="" width="72">
+        <br></br>
+        <label for="model-select">Select a model:</label>
+
+        <select name="model_selection" id="model_selection">
+            {%for i in range(0, num_models)%}
+            <option value="{{models[i]}}">{{models[i]}}</option>
+            {%endfor%}
+        </select>
         <h1 class="h3 mb-3 font-weight-normal">Upload an image</h1>
         <input type="file" name="file" class="form-control-file" id="inputfile">
-        <br/>
+        <br><br/>
         <button class="btn btn-lg btn-primary btn-block" type="submit">Upload</button>
-        <p class="mt-5 mb-3 text-muted">Cloud Systems project 2021/22</p>
+        <br><br/>
+        <h1 class="h3 mb-3 font-weight-normal" id="curr_model_pt">{{curr_model_pt}}</h1>
+        <br><br/>
+        <table border="1">
+          <tr>
+            <th>Class index</th>
+            <th>Class name</th>
+          </tr>
+          {%for i in range(0, num_classes)%}
+            <tr>
+              <td>{{i}}</td>
+              <td>{{class_names[i]}}</td>
+            </tr>
+          {%endfor%}
+        </table>
+        <p class="mt-5 mb-3 text-muted">Cloud Systems thesis</p>
     </form>
     <script src="//code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
     <script src="//cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.6/umd/popper.min.js" integrity="sha384-wHAiFfRlMFy6i5SRaxvfOCifBUQy1xHdJ/yoi7FRNXMRBu5WHdZYu1hA6ZOblgut" crossorigin="anonymous"></script>
