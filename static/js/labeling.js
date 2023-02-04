@@ -1,4 +1,5 @@
 var boundingBoxes = [];
+var use_custom_boxes = false;
 
 function reloadAsGet()
 {
@@ -18,18 +19,24 @@ let send_labels = () => {
   };
   var img_name = document.getElementById("original_image").src.split("/").pop();
   var curr_model_pt = document.getElementById('curr_model_pt').innerHTML;
-  xhr.send(JSON.stringify({curr_model_pt, img_name, boundingBoxes}));
+  // If the user decides to customize but does not create a single bounding box, treat the image as having no relevant objects
+  if(use_custom_boxes && boundingBoxes.length == 0){
+    boundingBoxes = "No bounding boxes";
+    xhr.send(JSON.stringify({curr_model_pt, img_name, boundingBoxes}));
+  }
+  else xhr.send(JSON.stringify({curr_model_pt, img_name, boundingBoxes}));
 
   alert("Labels sent to the server!");
   reloadAsGet();
 }
 
 let customize_labels = () => {
+  use_custom_boxes = true;
   var container_title = document.getElementById("container_title");
   container_title.innerHTML = "Labeling image";
-  //var send_labels_button = document.getElementById("send_labels");
+  var send_labels_button = document.getElementById("send_labels");
   var customize_labels_button = document.getElementById("customize_labels");
-  //send_labels_button.hidden = true;
+  send_labels_button.hidden = false;
   customize_labels_button.hidden = true;
 
   var canvas = document.getElementById("imgCanvas");

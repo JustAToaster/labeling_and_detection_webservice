@@ -18,17 +18,18 @@
     </style>
     <link rel="stylesheet" href="/static/style.css">
 
-    <title>YOLOv5 Detection</title>
+    <title>YOLOv5 pending models</title>
   </head>
   <body class="text-center">
+    <script type="text/javascript" src="/static/js/labeling.js"></script>
     <form class="form-signin" method=post enctype=multipart/form-data>
         <img class="mb-4" src="/static/pytorch.png" alt="" width="72">
         <br></br>
-        <label for="model-select">Select a model:</label>
+        <label for="model-select">Select a pending model:</label>
 
         <select name="model_selection" id="model_selection">
-            {%for i in range(0, num_models)%}
-            <option value="{{models[i]}}">{{models[i]}}</option>
+            {%for i in range(0, num_pending_models)%}
+            <option value="{{pending_models[i]}}">{{pending_models[i]}}</option>
             {%endfor%}
         </select>
         <h1 class="h3 mb-3 font-weight-normal">Upload an image</h1>
@@ -36,7 +37,7 @@
         <br><br/>
         <button class="btn btn-lg btn-primary btn-block" type="submit">Upload</button>
         <br><br/>
-        <h1 class="h3 mb-3 font-weight-normal" id="curr_model_pt">{{curr_model_pt}}</h1>
+        <h1 class="h3 mb-3 font-weight-normal" id="curr_model_pt">{{curr_pending_model}}</h1>
         <br><br/>
         <table border="1" style="margin: 0 auto;">
           <tr>
@@ -51,26 +52,27 @@
           {%endfor%}
         </table>
         <br><br/>
-        <p id="num_training_images">Current training set size: {{num_training_images}}</p>
+        <p id="num_training_images">Current training set size: {{num_training_images}}/{{min_training_set_size}}</p>
+        <p id="training_info">This model will become available once there is enough training data.</p>
         <p class="mt-5 mb-3 text-muted">Cloud Systems thesis</p>
     </form>
     <script src="//code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
     <script src="//cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.6/umd/popper.min.js" integrity="sha384-wHAiFfRlMFy6i5SRaxvfOCifBUQy1xHdJ/yoi7FRNXMRBu5WHdZYu1hA6ZOblgut" crossorigin="anonymous"></script>
     <script src="//stackpath.bootstrapcdn.com/bootstrap/4.2.1/js/bootstrap.min.js" integrity="sha384-B0UglyR+jN6CkvvICOB2joaf5I4l3gm9GU6Hc1og6Ls7i6U/mkkaduKaBhlAXv9k" crossorigin="anonymous"></script>
     <script type="text/javascript" src="/static/js/load_img.js"></script>
-    {% if pred_image_loc %}
+    {% if orig_image_loc %}
     <div class="container" id="pred_container">
-      <h1 id="container_title">Predicted Image</h1>
+      <h1 id="container_title">Uploaded image</h1>
       <img id="original_image" src="{{orig_image_loc}}" width="400" height="400" style="display:none">
-      <img id="predicted_image" src="{{pred_image_loc}}" width="400" height="400" style="display:none">
       <canvas id="imgCanvas" width="400" height="400">
       </canvas>
       <br></br>
       <button hidden id="send_labels" onclick="send_labels();">Send labels as training data</button>
       <br></br>
-      <button hidden id="customize_labels" onclick="customize_labels();">Customize labels</button>
-      <script type="text/javascript" src="/static/js/show_img.js"></script>
+      <button id="customize_labels" onclick="customize_labels();">Customize labels</button>
       <script type="text/javascript" src="/static/js/labeling.js"></script>
+      <script type="text/javascript" src="/static/js/show_img.js"></script>
+      <br></br>
     </div>
     {%endif%}
   </body>
