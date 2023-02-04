@@ -42,6 +42,8 @@ def save_labels():
         # Write './labels/predicted/' + image_name.rsplit('.', 1)[0] + '.txt' to S3
     else:
         custom_bounding_boxes = pd.DataFrame(bounding_boxes)[['class_index', 'centerX', 'centerY', 'boxWidth', 'boxHeight']]
+        if not os.path.exists('./labels/custom/' + curr_model_pt):
+            os.makedirs('./labels/custom/' + curr_model_pt)
         custom_labels_path = './labels/custom/' + curr_model_pt + "/" + image_name.rsplit('.', 1)[0] + '.txt'
         custom_bounding_boxes.to_csv(path_or_buf=custom_labels_path, sep=' ', header=False, index=False)
         # Write custom_labels_path to S3
@@ -85,6 +87,8 @@ def predict():
         results = model(img, size=640)
         pred_bounding_boxes = results.pandas().xywhn[0][['class', 'xcenter', 'ycenter', 'width', 'height']]
         # Save predictions to txt
+        if not os.path.exists('./labels/predicted/' + curr_model_pt):
+            os.makedirs('./labels/predicted/' + curr_model_pt)
         pred_labels_path = './labels/predicted/' + curr_model_pt + "/" + image_name.rsplit('.', 1)[0] + '.txt'
         pred_bounding_boxes.to_csv(path_or_buf=pred_labels_path, sep=' ', header=False, index=False)
         json_pred = pred_bounding_boxes.to_json(orient="records")
