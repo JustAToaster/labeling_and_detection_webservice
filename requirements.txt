@@ -6,6 +6,7 @@ matplotlib
 seaborn
 ipython
 psutil
+boto3
 
 Pillow
 PyYAML>=5.3.1

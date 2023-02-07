@@ -8,11 +8,26 @@ import json
 import pandas as pd
 import torch
 import zipfile
+import boto3
 
 import mysql.connector
 
 app = Flask(__name__)
 
+s3 = boto3.resource('s3')
+
+def download_models_if_updated(bucket_name, s3_folder):
+    bucket = s3.Bucket(bucket_name)
+    if not os.path.exists(s3_folder):
+        os.makedirs(s3_folder)
+    for obj in bucket.objects.filter(Prefix=s3_folder):
+        remote_last_modified = int(obj.last_modified.strftime('%s'))
+        if os.path.exists(obj.key) and remote_last_modified == int(os.path.getmtime(obj.key)):
+            print("Model " + obj.key + " is up to date")
+        else:
+            print("Downloading " + obj.key)
+            bucket.download_file(obj.key, obj.key)
+            os.utime(obj.key, (remote_last_modified, remote_last_modified))
 
 def update_db(remote_addr, img_name, json_pred):
     rds_db = mysql.connector.connect(
@@ -60,7 +75,8 @@ def save_labels():
 # Load image from user
 @app.route("/", methods=["GET", "POST"])
 def predict():
-    models_list = os.listdir('./models')
+    download_models_if_updated('justatoaster-yolov5-models', 'models')
+    models_list = os.listdir('models')
     curr_model_pt = models_list[0].rsplit('.', 1)[0]
     model = torch.hub.load('./yolov5', 'custom', path="./models/" + args.model + ".pt", source='local', autoshape=True)
     model.eval()
@@ -91,10 +107,10 @@ def predict():
         img = Image.open(io.BytesIO(img_bytes))
 
         # Save image to temp static folder
-        static_model_path = "static/original/" + curr_model_pt + "/"
-        if not os.path.exists(static_model_path):
-            os.makedirs(static_model_path)
-        original_image_loc = static_model_path + image_name
+        original_images_folder = "static/original/" + curr_model_pt + "/"
+        if not os.path.exists(original_images_folder):
+            os.makedirs(original_images_folder)
+        original_image_loc = original_images_folder + image_name
         img.save(original_image_loc)
 
         results = model(img, size=640)
@@ -109,7 +125,10 @@ def predict():
         results.render()
         for img in results.imgs:
             img_base64 = Image.fromarray(img)
-            predicted_image_loc = "static/predictions/" + curr_model_pt + "/predict_" + image_name
+            predicted_images_folder = "static/predictions/" + curr_model_pt + "/"
+            if not os.path.exists(predicted_images_folder):
+                os.makedirs(predicted_images_folder)
+            predicted_image_loc = predicted_images_folder + "/predict_" + image_name
             img_base64.save(predicted_image_loc, format="JPEG")
             if 'DB_HOSTNAME' in os.environ and 'DB_USERNAME' in os.environ and 'DB_PASSWORD' in os.environ:
                 update_db(request.remote_addr, image_name, json_pred)
@@ -190,4 +209,7 @@ if __name__ == "__main__":
     parser.add_argument("--port", default=32332, type=int, help="Service port")
     parser.add_argument("--model", default="base_yolov5s", type=str, help="Default model to use")
     args = parser.parse_args()
+    #models_bucket = s3.Bucket('justatoaster-yolov5-models')
+    #training_data_bucket = s3.Bucket('justatoaster-yolov5-training-data')
+    download_models_if_updated('justatoaster-yolov5-models', 'models')
     app.run(host="0.0.0.0", port=args.port)
