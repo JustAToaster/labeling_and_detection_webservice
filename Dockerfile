@@ -10,4 +10,4 @@ RUN pip install -r requirements.txt
 
 EXPOSE 32332
 
-CMD ["python", "service.py", "--port=32332", "--model=YCVR_big"]
+CMD ["python", "service.py", "--port=32332", "--model=base_yolov5s"]
