@@ -39,8 +39,8 @@ def save_labels():
     print("Image: " + image_name)
     if not bounding_boxes:
         print("The bounding boxes array is empty, saving predicted labels to S3")
-        # Write './labels/predicted/' + image_name.rsplit('.', 1)[0] + '.txt' to S3
-        # Write './labels/predicted/' + image_name.rsplit('.', 1)[0] + '.txt' to S3   
+        pred_labels_path = './labels/predicted/' + curr_model_pt + "/" + image_name.rsplit('.', 1)[0] + '.txt'
+        # Write pred_labels_path to S3
     else:
         if not os.path.exists('./labels/custom/' + curr_model_pt):
             os.makedirs('./labels/custom/' + curr_model_pt)
@@ -119,7 +119,7 @@ def predict():
     return render_template("index.html", class_names=model.names, num_classes=len(model.names), models=models_list, num_models=len(models_list), curr_model_pt=curr_model_pt, num_training_images=num_training_images)
 
 # Request model form
-@app.route("/request-model", methods=["GET", "POST"])
+@app.route("/request_model", methods=["GET", "POST"])
 def request_model():
 
     if request.method == "POST":
@@ -144,13 +144,17 @@ def request_model():
     return render_template("request_model.html")
 
 # Send data for pending models
-@app.route("/pending-models", methods=["GET", "POST"])
+@app.route("/pending_models", methods=["GET", "POST"])
 def pending_models():
     pending_models_list = os.listdir('./pending_models')
+    if not pending_models_list:
+        no_pending_models = True
+        return render_template("pending_models.html", no_pending_models=no_pending_models)
     curr_pending_model = pending_models_list[0].rsplit('.', 1)[0]
     with open('./pending_models/' + curr_pending_model + '/classes.txt', 'r') as class_list_file:
             class_list = list(filter(None, class_list_file.read().split('\n')))
     num_training_images = 0
+    # TODO: get training set size from S3
     min_training_set_size = 100
 
     if request.method == "POST":

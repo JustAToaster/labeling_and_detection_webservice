@@ -22,6 +22,8 @@
   </head>
   <body class="text-center">
     <form class="form-signin" method=post enctype=multipart/form-data>
+      <p id="index_link"><a href="{{ url_for('predict') }}">Index</a></p>
+      <p id="pending_models_link"><a href="{{ url_for('pending_models') }}">Pending models</a></p>
         <img class="mb-4" src="/static/pytorch.png" alt="" width="72">
         <br></br>
         <h1 class="h3 mb-3 font-weight-normal">Request a model</h1>

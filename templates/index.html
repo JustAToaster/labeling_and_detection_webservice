@@ -22,6 +22,8 @@
   </head>
   <body class="text-center">
     <form class="form-signin" method=post enctype=multipart/form-data>
+      <p id="request_model_link"><a href="{{ url_for('request_model') }}">Request model</a></p>
+      <p id="pending_models_link"><a href="{{ url_for('pending_models') }}">Pending models</a></p>
         <img class="mb-4" src="/static/pytorch.png" alt="" width="72">
         <br></br>
         <label for="model-select">Select a model:</label>

@@ -23,8 +23,13 @@
   <body class="text-center">
     <script type="text/javascript" src="/static/js/labeling.js"></script>
     <form class="form-signin" method=post enctype=multipart/form-data>
+      <p id="index"><a href="{{ url_for('predict') }}">Index</a></p>
+      <p id="request_model_link"><a href="{{ url_for('request_model') }}">Request model</a></p>
         <img class="mb-4" src="/static/pytorch.png" alt="" width="72">
         <br></br>
+        {% if no_pending_models %}
+        <h1 class="h3 mb-3 font-weight-normal">There are no pending models currently.</h1>
+        {% else %}
         <label for="model-select">Select a pending model:</label>
 
         <select name="model_selection" id="model_selection">
@@ -54,6 +59,7 @@
         <br><br/>
         <p id="num_training_images">Current training set size: {{num_training_images}}/{{min_training_set_size}}</p>
         <p id="training_info">This model will become available once there is enough training data.</p>
+        {% endif %}
         <p class="mt-5 mb-3 text-muted">Cloud Systems thesis</p>
     </form>
     <script src="//code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
@@ -65,14 +71,8 @@
       <h1 id="container_title">Uploaded image</h1>
       <img id="original_image" src="{{orig_image_loc}}" width="400" height="400" style="display:none">
       <canvas id="imgCanvas" width="400" height="400">
-      </canvas>
-      <br></br>
-      <button hidden id="send_labels" onclick="send_labels();">Send labels as training data</button>
-      <br></br>
-      <button id="customize_labels" onclick="customize_labels();">Customize labels</button>
-      <script type="text/javascript" src="/static/js/labeling.js"></script>
+      </canvas>      <script type="text/javascript" src="/static/js/labeling.js"></script>
       <script type="text/javascript" src="/static/js/show_img.js"></script>
-      <br></br>
     </div>
     {%endif%}
   </body>
