@@ -58,7 +58,7 @@
         </table>
         <br><br/>
         <p id="num_training_images">Current training set size: {{num_training_images}}/{{min_training_set_size}}</p>
-        <p id="training_info">This model will become available once there is enough training data.</p>
+        <p id="training_info">This model will be trained and available on the main page only after gathering enough training data.</p>
         {% endif %}
         <p class="mt-5 mb-3 text-muted">Cloud Systems thesis</p>
     </form>
@@ -71,7 +71,12 @@
       <h1 id="container_title">Uploaded image</h1>
       <img id="original_image" src="{{orig_image_loc}}" width="400" height="400" style="display:none">
       <canvas id="imgCanvas" width="400" height="400">
-      </canvas>      <script type="text/javascript" src="/static/js/labeling.js"></script>
+      </canvas>
+      <br></br>
+      <button hidden id="send_labels" onclick="send_labels();">Send labels as training data</button>
+      <br></br>
+      <button hidden id="customize_labels" onclick="customize_labels();">Customize labels</button>
+      <script type="text/javascript" src="/static/js/labeling.js"></script>
       <script type="text/javascript" src="/static/js/show_img.js"></script>
     </div>
     {%endif%}

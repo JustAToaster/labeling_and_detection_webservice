@@ -10,7 +10,7 @@ function reloadAsGet()
 let send_labels = () => {
   //Label transfer to server
   var xhr = new XMLHttpRequest();
-  xhr.open("POST", "/save-labels", true);
+  xhr.open("POST", "/save_labels", true);
   xhr.setRequestHeader("Content-Type", "application/json");
   xhr.onreadystatechange = function() {
     if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
@@ -19,12 +19,12 @@ let send_labels = () => {
   };
   var img_name = document.getElementById("original_image").src.split("/").pop();
   var curr_model_pt = document.getElementById('curr_model_pt').innerHTML;
+  var is_pending_model = document.title == "YOLOv5 pending models"
   // If the user decides to customize but does not create a single bounding box, treat the image as having no relevant objects
   if(use_custom_boxes && boundingBoxes.length == 0){
     boundingBoxes = "No bounding boxes";
-    xhr.send(JSON.stringify({curr_model_pt, img_name, boundingBoxes}));
   }
-  else xhr.send(JSON.stringify({curr_model_pt, img_name, boundingBoxes}));
+  xhr.send(JSON.stringify({curr_model_pt, img_name, boundingBoxes, is_pending_model}));
 
   alert("Labels sent to the server!");
   reloadAsGet();

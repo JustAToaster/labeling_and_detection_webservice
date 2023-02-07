@@ -14,10 +14,11 @@ import mysql.connector
 
 app = Flask(__name__)
 
-s3 = boto3.resource('s3')
+s3_resource = boto3.resource('s3')
+s3_client = boto3.client('s3')
 
 def download_files_if_updated(bucket_name, s3_folder):
-    bucket = s3.Bucket(bucket_name)
+    bucket = s3_resource.Bucket(bucket_name)
     if not os.path.exists(s3_folder):
         os.makedirs(s3_folder)
     for obj in bucket.objects.filter(Prefix=s3_folder):
@@ -29,25 +30,43 @@ def download_files_if_updated(bucket_name, s3_folder):
         if os.path.exists(obj.key) and remote_last_modified == int(os.path.getmtime(obj.key)):
             print("File " + obj.key + " is up to date")
         else:
-            print("Downloading " + obj.key)
+            print("Downloading " + obj.key + " from the S3 bucket")
             bucket.download_file(obj.key, obj.key)
             os.utime(obj.key, (remote_last_modified, remote_last_modified))
 
 def get_pending_models(bucket_name, s3_folder, txt_file):
-    bucket = s3.Bucket(bucket_name)
-    result = bucket.meta.client.list_objects(Bucket=bucket.name, Prefix=s3_folder, Delimiter='/')
+    bucket = s3_resource.Bucket(bucket_name)
+    result = s3_client.list_objects(Bucket=bucket.name, Prefix=s3_folder, Delimiter='/')
     pending_models_list = [o.get('Prefix').split('/')[1] for o in result.get('CommonPrefixes')]
     for pending_model in pending_models_list:
         if not os.path.exists(s3_folder + pending_model):
             os.makedirs(s3_folder + pending_model)
         class_file_name = s3_folder + pending_model + txt_file
-        remote_last_modified = int(s3.ObjectSummary(bucket_name=bucket.name, key=class_file_name).last_modified.strftime('%s'))
+        remote_last_modified = int(s3_resource.ObjectSummary(bucket_name=bucket.name, key=class_file_name).last_modified.strftime('%s'))
         if os.path.exists(class_file_name) and remote_last_modified == int(os.path.getmtime(class_file_name)):
             print("File " + class_file_name + " is up to date")
         else:
-            print("Downloading " + class_file_name)
+            print("Downloading " + class_file_name + " from the S3 bucket")
             bucket.download_file(class_file_name, class_file_name)
             os.utime(class_file_name, (remote_last_modified, remote_last_modified))
+
+def upload_requested_model(bucket_name, pending_model_path):
+    for root, dirs, files in os.walk(pending_model_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            print("Uploading file " + file_path + " to the S3 bucket")
+            s3_client.upload_file(file_path, bucket_name, file_path)
+
+# Use paginator in case training set size > 1000 (S3 API limit)
+def count_training_set_size(bucket_name, model_path):
+    paginator = s3_client.get_paginator('list_objects_v2')
+    count = 0
+    #print(model_path)
+    for result in paginator.paginate(Bucket=bucket_name, Prefix=model_path + '/labels/train/', Delimiter='/'):
+        key_count = result.get('KeyCount')
+        if key_count is not None:
+            count += key_count
+    return count
 
 def update_db(remote_addr, img_name, json_pred):
     rds_db = mysql.connector.connect(
@@ -65,21 +84,32 @@ def update_db(remote_addr, img_name, json_pred):
 
     rds_db.commit()
 
-@app.route('/save-labels', methods=['POST'])
+@app.route('/save_labels', methods=['POST'])
 def save_labels():
     request_data = json.loads(request.data)
     curr_model_pt = request_data['curr_model_pt']
     image_name = request_data['img_name']
     bounding_boxes = request_data['boundingBoxes']
+    is_pending_model = request_data['is_pending_model']
+    model_folder_prefix = ""
+    if is_pending_model:
+        model_folder_prefix = "pending_"
     print("Image: " + image_name)
+    # Upload image to S3
+    labels_txt = image_name.rsplit('.', 1)[0] + '.txt'
+    static_model_path = "static/original/" + curr_model_pt + "/"
+    original_image_loc = static_model_path + image_name
+    s3_client.upload_file(original_image_loc, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model_pt + '/images/train/' + image_name)
     if not bounding_boxes:
         print("The bounding boxes array is empty, saving predicted labels to S3")
-        pred_labels_path = './labels/predicted/' + curr_model_pt + "/" + image_name.rsplit('.', 1)[0] + '.txt'
+        pred_labels_path = 'labels/predicted/' + curr_model_pt + "/" + labels_txt
         # Write pred_labels_path to S3
+        s3_client.upload_file(pred_labels_path, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model_pt + '/labels/train/' + labels_txt)
+        print("Uploading file " + pred_labels_path + " to the S3 bucket")
     else:
-        if not os.path.exists('./labels/custom/' + curr_model_pt):
-            os.makedirs('./labels/custom/' + curr_model_pt)
-        custom_labels_path = './labels/custom/' + curr_model_pt + "/" + image_name.rsplit('.', 1)[0] + '.txt'
+        if not os.path.exists('labels/custom/' + curr_model_pt):
+            os.makedirs('labels/custom/' + curr_model_pt)
+        custom_labels_path = 'labels/custom/' + curr_model_pt + "/" + image_name.rsplit('.', 1)[0] + '.txt'
         if bounding_boxes == "No bounding boxes":
             with open(custom_labels_path, 'w') as labels_file:
                 labels_file.write("")
@@ -87,22 +117,23 @@ def save_labels():
             custom_bounding_boxes = pd.DataFrame(bounding_boxes)[['class_index', 'centerX', 'centerY', 'boxWidth', 'boxHeight']]
             custom_bounding_boxes.to_csv(path_or_buf=custom_labels_path, sep=' ', header=False, index=False)
         # Write custom_labels_path to S3
+        s3_client.upload_file(custom_labels_path, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model_pt + '/labels/train/' + labels_txt)
+        print("Uploading file " + custom_labels_path + " to the S3 bucket")
     #print(bounding_boxes)
     #print(bounding_boxes[0])
 
-    return jsonify({"message": "Bounding box saved successfully"}), 200
+    return jsonify({"message": "Bounding boxes saved successfully"}), 200
 
 # Load image from user
 @app.route("/", methods=["GET", "POST"])
 def predict():
-    download_files_if_updated('justatoaster-yolov5-models', 'models')
+    download_files_if_updated(args.models_bucket, 'models')
     models_list = os.listdir('models')
     curr_model_pt = models_list[0].rsplit('.', 1)[0]
-    model = torch.hub.load('./yolov5', 'custom', path="./models/" + args.model + ".pt", source='local', autoshape=True)
+    model = torch.hub.load('yolov5', 'custom', path="models/" + args.model + ".pt", source='local', autoshape=True)
     model.eval()
     model.cpu()
-    num_training_images = 0
-    # TODO: get training set size from S3
+    num_training_images = count_training_set_size(args.training_data_bucket, "models/" + curr_model_pt)
 
     if request.method == "POST":
         curr_model_pt = request.form['model_selection'].rsplit('.', 1)[0]
@@ -114,14 +145,13 @@ def predict():
             return
 
         # Load requested model
-        model = torch.hub.load('./yolov5', 'custom', path="./models/" + curr_model_pt + ".pt", source='local', autoshape=True)
+        model = torch.hub.load('yolov5', 'custom', path="models/" + curr_model_pt + ".pt", source='local', autoshape=True)
         print("Loaded model with classes: ")
         print(model.names)
         model.eval()
         model.cpu()
 
-        num_training_images = 0
-        # TODO: get training set size from S3
+        num_training_images = count_training_set_size(args.training_data_bucket, "models/" + curr_model_pt)
 
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes))
@@ -136,9 +166,9 @@ def predict():
         results = model(img, size=640)
         pred_bounding_boxes = results.pandas().xywhn[0][['class', 'xcenter', 'ycenter', 'width', 'height']]
         # Save predictions to txt
-        if not os.path.exists('./labels/predicted/' + curr_model_pt):
-            os.makedirs('./labels/predicted/' + curr_model_pt)
-        pred_labels_path = './labels/predicted/' + curr_model_pt + "/" + image_name.rsplit('.', 1)[0] + '.txt'
+        if not os.path.exists('labels/predicted/' + curr_model_pt):
+            os.makedirs('labels/predicted/' + curr_model_pt)
+        pred_labels_path = 'labels/predicted/' + curr_model_pt + "/" + image_name.rsplit('.', 1)[0] + '.txt'
         pred_bounding_boxes.to_csv(path_or_buf=pred_labels_path, sep=' ', header=False, index=False)
         json_pred = pred_bounding_boxes.to_json(orient="records")
 
@@ -164,7 +194,7 @@ def request_model():
     if request.method == "POST":
         model_name = request.form['model_name']
         class_list = request.form['class_list']
-        pending_model_path = './pending_models/' + model_name
+        pending_model_path = 'pending_models/' + model_name
         if not os.path.exists(pending_model_path + '/labels/train'):
             os.makedirs(pending_model_path + '/labels/train')
         if not os.path.exists(pending_model_path + '/images/train'):
@@ -177,7 +207,7 @@ def request_model():
             file_like_object = file.stream._file  
             zipfile_ob = zipfile.ZipFile(file_like_object)
             zipfile_ob.extractall(path=pending_model_path)
-            # Upload files to S3 ...
+        upload_requested_model(args.training_data_bucket, pending_model_path)
         return render_template("request_model.html")
 
     return render_template("request_model.html")
@@ -185,16 +215,15 @@ def request_model():
 # Send data for pending models
 @app.route("/pending_models", methods=["GET", "POST"])
 def pending_models():
-    get_pending_models('justatoaster-yolov5-training-data', 'pending_models/', '/classes.txt')
+    get_pending_models(args.training_data_bucket, 'pending_models/', '/classes.txt')
     pending_models_list = os.listdir('pending_models')
     if not pending_models_list:
         no_pending_models = True
         return render_template("pending_models.html", no_pending_models=no_pending_models)
     curr_pending_model = pending_models_list[0].rsplit('.', 1)[0]
-    with open('./pending_models/' + curr_pending_model + '/classes.txt', 'r') as class_list_file:
+    with open('pending_models/' + curr_pending_model + '/classes.txt', 'r') as class_list_file:
             class_list = list(filter(None, class_list_file.read().split('\n')))
-    num_training_images = 0
-    # TODO: get training set size from S3
+    num_training_images = count_training_set_size(args.training_data_bucket, "pending_models/" + curr_pending_model)
     min_training_set_size = 100
 
     if request.method == "POST":
@@ -205,11 +234,10 @@ def pending_models():
         image_name = file.filename
         if not file:
             return
-        pending_model_path = './pending_models/' + curr_pending_model
+        pending_model_path = 'pending_models/' + curr_pending_model
         with open(pending_model_path + '/classes.txt', 'r') as class_list_file:
             class_list = list(filter(None, class_list_file.read().split('\n')))
-        num_training_images = len(os.listdir('./pending_models/' + curr_pending_model + '/labels/train'))
-        # TODO: get training set size from S3
+        num_training_images = count_training_set_size(args.training_data_bucket, "pending_models/" + curr_pending_model)
 
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes))
@@ -229,8 +257,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Flask web app for YOLOv5")
     parser.add_argument("--port", default=32332, type=int, help="Service port")
     parser.add_argument("--model", default="base_yolov5s", type=str, help="Default model to use")
+    parser.add_argument("--training_data_bucket", default="justatoaster-yolov5-training-data", type=str, help="Training data S3 bucket name")
+    parser.add_argument("--models_bucket", default="justatoaster-yolov5-models", type=str, help="YOLOv5 models S3 bucket name")
     args = parser.parse_args()
-    #models_bucket = s3.Bucket('justatoaster-yolov5-models')
-    #training_data_bucket = s3.Bucket('justatoaster-yolov5-training-data')
-    download_files_if_updated('justatoaster-yolov5-models', 'models')
+    #models_bucket = s3_resource.Bucket('justatoaster-yolov5-models')
+    #training_data_bucket = s3_resource.Bucket('')
+    download_files_if_updated(args.models_bucket, 'models')
     app.run(host="0.0.0.0", port=args.port)
