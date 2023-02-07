@@ -16,18 +16,38 @@ app = Flask(__name__)
 
 s3 = boto3.resource('s3')
 
-def download_models_if_updated(bucket_name, s3_folder):
+def download_files_if_updated(bucket_name, s3_folder):
     bucket = s3.Bucket(bucket_name)
     if not os.path.exists(s3_folder):
         os.makedirs(s3_folder)
     for obj in bucket.objects.filter(Prefix=s3_folder):
         remote_last_modified = int(obj.last_modified.strftime('%s'))
+        if not os.path.exists(os.path.dirname(obj.key)):
+            os.makedirs(os.path.dirname(obj.key))
+        if obj.key[-1] == '/':
+            continue
         if os.path.exists(obj.key) and remote_last_modified == int(os.path.getmtime(obj.key)):
-            print("Model " + obj.key + " is up to date")
+            print("File " + obj.key + " is up to date")
         else:
             print("Downloading " + obj.key)
             bucket.download_file(obj.key, obj.key)
             os.utime(obj.key, (remote_last_modified, remote_last_modified))
+
+def get_pending_models(bucket_name, s3_folder, txt_file):
+    bucket = s3.Bucket(bucket_name)
+    result = bucket.meta.client.list_objects(Bucket=bucket.name, Prefix=s3_folder, Delimiter='/')
+    pending_models_list = [o.get('Prefix').split('/')[1] for o in result.get('CommonPrefixes')]
+    for pending_model in pending_models_list:
+        if not os.path.exists(s3_folder + pending_model):
+            os.makedirs(s3_folder + pending_model)
+        class_file_name = s3_folder + pending_model + txt_file
+        remote_last_modified = int(s3.ObjectSummary(bucket_name=bucket.name, key=class_file_name).last_modified.strftime('%s'))
+        if os.path.exists(class_file_name) and remote_last_modified == int(os.path.getmtime(class_file_name)):
+            print("File " + class_file_name + " is up to date")
+        else:
+            print("Downloading " + class_file_name)
+            bucket.download_file(class_file_name, class_file_name)
+            os.utime(class_file_name, (remote_last_modified, remote_last_modified))
 
 def update_db(remote_addr, img_name, json_pred):
     rds_db = mysql.connector.connect(
@@ -75,7 +95,7 @@ def save_labels():
 # Load image from user
 @app.route("/", methods=["GET", "POST"])
 def predict():
-    download_models_if_updated('justatoaster-yolov5-models', 'models')
+    download_files_if_updated('justatoaster-yolov5-models', 'models')
     models_list = os.listdir('models')
     curr_model_pt = models_list[0].rsplit('.', 1)[0]
     model = torch.hub.load('./yolov5', 'custom', path="./models/" + args.model + ".pt", source='local', autoshape=True)
@@ -165,7 +185,8 @@ def request_model():
 # Send data for pending models
 @app.route("/pending_models", methods=["GET", "POST"])
 def pending_models():
-    pending_models_list = os.listdir('./pending_models')
+    get_pending_models('justatoaster-yolov5-training-data', 'pending_models/', '/classes.txt')
+    pending_models_list = os.listdir('pending_models')
     if not pending_models_list:
         no_pending_models = True
         return render_template("pending_models.html", no_pending_models=no_pending_models)
@@ -211,5 +232,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     #models_bucket = s3.Bucket('justatoaster-yolov5-models')
     #training_data_bucket = s3.Bucket('justatoaster-yolov5-training-data')
-    download_models_if_updated('justatoaster-yolov5-models', 'models')
+    download_files_if_updated('justatoaster-yolov5-models', 'models')
     app.run(host="0.0.0.0", port=args.port)
