@@ -3,6 +3,8 @@ import argparse
 import os
 from PIL import Image
 
+from random import random
+
 from flask import Flask, render_template, request, jsonify, redirect
 import json
 import pandas as pd
@@ -51,22 +53,38 @@ def get_pending_models(bucket_name, s3_folder, txt_file):
             os.utime(class_file_name, (remote_last_modified, remote_last_modified))
 
 def upload_requested_model(bucket_name, pending_model_path):
-    for root, dirs, files in os.walk(pending_model_path):
-        for file in files:
-            file_path = os.path.join(root, file)
-            print("Uploading file " + file_path + " to the S3 bucket")
-            s3_client.upload_file(file_path, bucket_name, file_path)
+    print("Uploading class list for " + pending_model_path + " to the S3 bucket")
+    s3_client.upload_file(pending_model_path + 'classes.txt', bucket_name, pending_model_path + 'classes.txt')
+    for labels_filename in os.listdir(pending_model_path + 'labels/'):
+        labels_filepath = os.path.join(pending_model_path + 'labels/', labels_filename)
+        image_filepath = labels_filepath.rsplit('.', 1)[0] + '.jpg'
+        image_filename = labels_filename.rsplit('.', 1)[0] + '.jpg'
+        # Randomize training and validation split
+        if random() <= 0.8:
+            extracted_set = '/train/'
+        else:
+            extracted_set = '/valid/'
+        print("Uploading image and labels for " + image_filename + " to the S3 bucket")
+        s3_client.upload_file(labels_filepath, bucket_name, pending_model_path + extracted_set + 'labels/' + labels_filename)
+        s3_client.upload_file(image_filepath, bucket_name, pending_model_path + extracted_set + 'images/' + image_filename)
 
 # Use paginator in case training set size > 1000 (S3 API limit)
-def count_training_set_size(bucket_name, model_path):
+def count_dataset_size(bucket_name, model_path):
     paginator = s3_client.get_paginator('list_objects_v2')
-    count = 0
+    training_count = 0
+    validation_count = 0
     #print(model_path)
     for result in paginator.paginate(Bucket=bucket_name, Prefix=model_path + '/labels/train/', Delimiter='/'):
         key_count = result.get('KeyCount')
         if key_count is not None:
-            count += key_count
-    return count
+            training_count += key_count
+
+    for result in paginator.paginate(Bucket=bucket_name, Prefix=model_path + '/labels/valid/', Delimiter='/'):
+        key_count = result.get('KeyCount')
+        if key_count is not None:
+            validation_count += key_count
+
+    return training_count, validation_count
 
 def update_db(remote_addr, img_name, json_pred):
     rds_db = mysql.connector.connect(
@@ -133,7 +151,7 @@ def predict():
     model = torch.hub.load('yolov5', 'custom', path="models/" + args.model + ".pt", source='local', autoshape=True)
     model.eval()
     model.cpu()
-    num_training_images = count_training_set_size(args.training_data_bucket, "models/" + curr_model_pt)
+    num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_model_pt)
 
     if request.method == "POST":
         curr_model_pt = request.form['model_selection'].rsplit('.', 1)[0]
@@ -151,7 +169,7 @@ def predict():
         model.eval()
         model.cpu()
 
-        num_training_images = count_training_set_size(args.training_data_bucket, "models/" + curr_model_pt)
+        num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_model_pt)
 
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes))
@@ -183,9 +201,9 @@ def predict():
             if 'DB_HOSTNAME' in os.environ and 'DB_USERNAME' in os.environ and 'DB_PASSWORD' in os.environ:
                 update_db(request.remote_addr, image_name, json_pred)
         #return redirect(predicted_image_name)
-        return render_template("index.html", pred_image_loc=predicted_image_loc, orig_image_loc=original_image_loc, class_names=model.names, num_classes=len(model.names), models=models_list, num_models=len(models_list), curr_model_pt=curr_model_pt, num_training_images=num_training_images)
+        return render_template("index.html", pred_image_loc=predicted_image_loc, orig_image_loc=original_image_loc, class_names=model.names, num_classes=len(model.names), models=models_list, num_models=len(models_list), curr_model_pt=curr_model_pt, num_training_images=num_training_images, num_validation_images=num_validation_images)
 
-    return render_template("index.html", class_names=model.names, num_classes=len(model.names), models=models_list, num_models=len(models_list), curr_model_pt=curr_model_pt, num_training_images=num_training_images)
+    return render_template("index.html", class_names=model.names, num_classes=len(model.names), models=models_list, num_models=len(models_list), curr_model_pt=curr_model_pt, num_training_images=num_training_images, num_validation_images=num_validation_images)
 
 # Request model form
 @app.route("/request_model", methods=["GET", "POST"])
@@ -194,13 +212,9 @@ def request_model():
     if request.method == "POST":
         model_name = request.form['model_name']
         class_list = request.form['class_list']
-        pending_model_path = 'pending_models/' + model_name
-        if not os.path.exists(pending_model_path + '/labels/train'):
-            os.makedirs(pending_model_path + '/labels/train')
-        if not os.path.exists(pending_model_path + '/images/train'):
-            os.makedirs(pending_model_path + '/images/train')
+        pending_model_path = 'pending_models/' + model_name + '/'
         # Write class list
-        with open(pending_model_path + '/classes.txt', 'w') as class_list_file:
+        with open(pending_model_path + 'classes.txt', 'w') as class_list_file:
             class_list_file.write(class_list)
         if "file" in request.files and request.files["file"]:
             file = request.files["file"]
@@ -223,8 +237,9 @@ def pending_models():
     curr_pending_model = pending_models_list[0].rsplit('.', 1)[0]
     with open('pending_models/' + curr_pending_model + '/classes.txt', 'r') as class_list_file:
             class_list = list(filter(None, class_list_file.read().split('\n')))
-    num_training_images = count_training_set_size(args.training_data_bucket, "pending_models/" + curr_pending_model)
-    min_training_set_size = 100
+    num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "pending_models/" + curr_pending_model)
+    min_training_set_size = 80
+    min_validation_set_size = 20
 
     if request.method == "POST":
         curr_pending_model = request.form['model_selection'].rsplit('.', 1)[0]
@@ -234,10 +249,10 @@ def pending_models():
         image_name = file.filename
         if not file:
             return
-        pending_model_path = 'pending_models/' + curr_pending_model
-        with open(pending_model_path + '/classes.txt', 'r') as class_list_file:
+        pending_model_path = 'pending_models/' + curr_pending_model + '/'
+        with open(pending_model_path + 'classes.txt', 'r') as class_list_file:
             class_list = list(filter(None, class_list_file.read().split('\n')))
-        num_training_images = count_training_set_size(args.training_data_bucket, "pending_models/" + curr_pending_model)
+        num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "pending_models/" + curr_pending_model)
 
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes))
@@ -249,9 +264,9 @@ def pending_models():
         original_image_loc = static_model_path + image_name
         img.save(original_image_loc)
 
-        return render_template("pending_models.html", orig_image_loc=original_image_loc, class_names=class_list, num_classes=len(class_list), pending_models=pending_models_list, num_pending_models=len(pending_models_list), curr_pending_model=curr_pending_model, num_training_images=num_training_images, min_training_set_size=min_training_set_size)
+        return render_template("pending_models.html", orig_image_loc=original_image_loc, class_names=class_list, num_classes=len(class_list), pending_models=pending_models_list, num_pending_models=len(pending_models_list), curr_pending_model=curr_pending_model, num_training_images=num_training_images, num_validation_images=num_validation_images, min_training_set_size=min_training_set_size, min_validation_set_size=min_validation_set_size)
 
-    return render_template("pending_models.html", class_names=class_list, num_classes=len(class_list), pending_models=pending_models_list, num_pending_models=len(pending_models_list), curr_pending_model=curr_pending_model, num_training_images=num_training_images, min_training_set_size=min_training_set_size)
+    return render_template("pending_models.html", class_names=class_list, num_classes=len(class_list), pending_models=pending_models_list, num_pending_models=len(pending_models_list), curr_pending_model=curr_pending_model, num_training_images=num_training_images, num_validation_images=num_validation_images, min_training_set_size=min_training_set_size, min_validation_set_size=min_validation_set_size)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Flask web app for YOLOv5")

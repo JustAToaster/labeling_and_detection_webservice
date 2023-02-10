@@ -54,6 +54,7 @@
         </table>
         <br><br/>
         <p id="num_training_images">Current training set size: {{num_training_images}}</p>
+        <p id="num_validation_images">Current validation set size: {{num_validation_images}}</p>
         <p class="mt-5 mb-3 text-muted">Cloud Systems thesis</p>
     </form>
     <script src="//code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
@@ -68,7 +69,7 @@
       <canvas id="imgCanvas" width="400" height="400">
       </canvas>
       <br></br>
-      <button hidden id="send_labels" onclick="send_labels();">Send labels as training data</button>
+      <button hidden id="send_labels" onclick="send_labels();">Send labels as training/validation data</button>
       <br></br>
       <button hidden id="customize_labels" onclick="customize_labels();">Customize labels</button>
       <script type="text/javascript" src="/static/js/show_img.js"></script>
