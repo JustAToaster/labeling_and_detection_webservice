@@ -59,6 +59,7 @@ def upload_requested_model(bucket_name, pending_model_path):
         labels_filepath = os.path.join(pending_model_path + 'labels/', labels_filename)
         image_filepath = labels_filepath.rsplit('.', 1)[0] + '.jpg'
         image_filename = labels_filename.rsplit('.', 1)[0] + '.jpg'
+        extracted_set = "/"
         # Randomize training and validation split
         if random() <= 0.8:
             extracted_set = '/train/'
@@ -116,27 +117,31 @@ def save_labels():
     # Upload image to S3
     labels_txt = image_name.rsplit('.', 1)[0] + '.txt'
     static_model_path = "static/original/" + curr_model_pt + "/"
-    original_image_loc = static_model_path + image_name
-    s3_client.upload_file(original_image_loc, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model_pt + '/images/train/' + image_name)
+    image_filepath = static_model_path + image_name
+    extracted_set = "/"
+    # Randomize training and validation split
+    if random() <= 0.8:
+        extracted_set = '/train/'
+    else:
+        extracted_set = '/valid/'
     if not bounding_boxes:
         print("The bounding boxes array is empty, saving predicted labels to S3")
-        pred_labels_path = 'labels/predicted/' + curr_model_pt + "/" + labels_txt
-        # Write pred_labels_path to S3
-        s3_client.upload_file(pred_labels_path, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model_pt + '/labels/train/' + labels_txt)
-        print("Uploading file " + pred_labels_path + " to the S3 bucket")
+        label_folder = '/predicted/'
     else:
+        label_folder = '/custom/'
         if not os.path.exists('labels/custom/' + curr_model_pt):
             os.makedirs('labels/custom/' + curr_model_pt)
-        custom_labels_path = 'labels/custom/' + curr_model_pt + "/" + image_name.rsplit('.', 1)[0] + '.txt'
-        if bounding_boxes == "No bounding boxes":
-            with open(custom_labels_path, 'w') as labels_file:
-                labels_file.write("")
-        else:
-            custom_bounding_boxes = pd.DataFrame(bounding_boxes)[['class_index', 'centerX', 'centerY', 'boxWidth', 'boxHeight']]
-            custom_bounding_boxes.to_csv(path_or_buf=custom_labels_path, sep=' ', header=False, index=False)
-        # Write custom_labels_path to S3
-        s3_client.upload_file(custom_labels_path, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model_pt + '/labels/train/' + labels_txt)
-        print("Uploading file " + custom_labels_path + " to the S3 bucket")
+            custom_labels_path = 'labels/custom/' + curr_model_pt + "/" + labels_txt
+            if bounding_boxes == "No bounding boxes":
+                with open(custom_labels_path, 'w') as labels_file:
+                    labels_file.write("")
+            else:
+                custom_bounding_boxes = pd.DataFrame(bounding_boxes)[['class_index', 'centerX', 'centerY', 'boxWidth', 'boxHeight']]
+                custom_bounding_boxes.to_csv(path_or_buf=custom_labels_path, sep=' ', header=False, index=False)
+    print("Uploading image and labels for " + image_name + " to the S3 bucket")
+    labels_filepath = 'labels/' + label_folder + curr_model_pt + '/' + labels_txt
+    s3_client.upload_file(labels_filepath, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model_pt + '/labels' + extracted_set + labels_txt)
+    s3_client.upload_file(image_filepath, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model_pt + '/images' + extracted_set + image_name)
     #print(bounding_boxes)
     #print(bounding_boxes[0])
 
