@@ -12,7 +12,7 @@ import torch
 import zipfile
 import boto3
 
-import mysql.connector
+import psycopg2
 
 app = Flask(__name__)
 
@@ -86,21 +86,21 @@ def count_dataset_size(bucket_name, model_path):
 
     return training_count, validation_count
 
-def update_db(remote_addr, img_name, json_pred):
-    rds_db = mysql.connector.connect(
-    host = os.getenv('DB_HOSTNAME'),
-    user = os.getenv('DB_USERNAME'),
-    password = os.getenv('DB_PASSWORD'),
-    database = "yolov5_predictions"
-    )
+def update_db(remote_addr, img_name, cust_score):
+    conn = psycopg2.connect(
+    host=os.getenv('DB_HOSTNAME'),
+    database="yolov5_predictions",
+    user=os.getenv('DB_USERNAME'),
+    password=os.getenv('DB_PASSWORD'))
 
-    cur = rds_db.cursor()
-
-    sql = "INSERT INTO requests (Address, ImageName, JsonPredictions) VALUES (%s, %s, %s)"
-    val = (str(remote_addr), str(img_name), str(json_pred))
+    cur = conn.cursor()
+    sql = "INSERT INTO requests (UserAddress, ImageName, CustomizationScore) VALUES (%s, %s, %s)"
+    val = (str(remote_addr), str(img_name), str(cust_score))
     cur.execute(sql, val)
 
-    rds_db.commit()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 @app.route('/save_labels', methods=['POST'])
 def save_labels():
