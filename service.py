@@ -14,10 +14,14 @@ import boto3
 
 import psycopg2
 
+from custom_metrics import customization_score
+
 app = Flask(__name__)
 
 s3_resource = boto3.resource('s3')
 s3_client = boto3.client('s3')
+
+s3_interaction = 0 if os.getenv('S3_INTERACTION') == '0' else 1
 
 def download_files_if_updated(bucket_name, s3_folder):
     bucket = s3_resource.Bucket(bucket_name)
@@ -52,7 +56,7 @@ def get_pending_models(bucket_name, s3_folder, txt_file):
             bucket.download_file(class_file_name, class_file_name)
             os.utime(class_file_name, (remote_last_modified, remote_last_modified))
 
-def upload_requested_model(bucket_name, pending_model_path):
+def upload_pending_model(bucket_name, pending_model_path):
     print("Uploading class list for " + pending_model_path + " to the S3 bucket")
     s3_client.upload_file(pending_model_path + 'classes.txt', bucket_name, pending_model_path + 'classes.txt')
     for labels_filename in os.listdir(pending_model_path + 'labels/'):
@@ -106,17 +110,17 @@ def update_db(remote_addr, img_name, cust_score):
 @app.route('/save_labels', methods=['POST'])
 def save_labels():
     request_data = json.loads(request.data)
-    curr_model_pt = request_data['curr_model_pt']
+    curr_model = request_data['curr_model']
     image_name = request_data['img_name']
     bounding_boxes = request_data['boundingBoxes']
     is_pending_model = request_data['is_pending_model']
     model_folder_prefix = ""
     if is_pending_model:
         model_folder_prefix = "pending_"
-    print("Image: " + image_name)
-    # Upload image to S3
     labels_txt = image_name.rsplit('.', 1)[0] + '.txt'
-    static_model_path = "static/original/" + curr_model_pt + "/"
+    static_model_path = "static/original/" + curr_model + "/"
+    predicted_labels_path = 'labels/predicted/' + curr_model + "/" + labels_txt
+    custom_labels_path = 'labels/custom/' + curr_model + "/" + labels_txt
     image_filepath = static_model_path + image_name
     extracted_set = "/"
     # Randomize training and validation split
@@ -125,41 +129,54 @@ def save_labels():
     else:
         extracted_set = '/valid/'
     if not bounding_boxes:
-        print("The bounding boxes array is empty, saving predicted labels to S3")
-        label_folder = '/predicted/'
+        # Remove confidence from predicted labels
+        predicted_bounding_boxes = pd.read_csv(filepath_or_buffer=predicted_labels_path, sep=' ', names=['class_index', 'centerX', 'centerY', 'boxWidth', 'boxHeight', 'confidence'], index_col=False).drop('confidence', axis=1).to_csv(path_or_buf=predicted_labels_path, sep=' ', header=False, index=False)
+        if s3_interaction:
+            print("The bounding boxes array is empty, saving predicted labels for " + image_name + " to S3")
+            s3_client.upload_file(predicted_labels_path, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model + '/labels' + extracted_set + labels_txt)
     else:
-        label_folder = '/custom/'
-        if not os.path.exists('labels/custom/' + curr_model_pt):
-            os.makedirs('labels/custom/' + curr_model_pt)
-            custom_labels_path = 'labels/custom/' + curr_model_pt + "/" + labels_txt
-            if bounding_boxes == "No bounding boxes":
-                with open(custom_labels_path, 'w') as labels_file:
-                    labels_file.write("")
-            else:
-                custom_bounding_boxes = pd.DataFrame(bounding_boxes)[['class_index', 'centerX', 'centerY', 'boxWidth', 'boxHeight']]
-                custom_bounding_boxes.to_csv(path_or_buf=custom_labels_path, sep=' ', header=False, index=False)
-    print("Uploading image and labels for " + image_name + " to the S3 bucket")
-    labels_filepath = 'labels/' + label_folder + curr_model_pt + '/' + labels_txt
-    s3_client.upload_file(labels_filepath, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model_pt + '/labels' + extracted_set + labels_txt)
-    s3_client.upload_file(image_filepath, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model_pt + '/images' + extracted_set + image_name)
-    #print(bounding_boxes)
-    #print(bounding_boxes[0])
-
+        if not os.path.exists('labels/custom/' + curr_model):
+            os.makedirs('labels/custom/' + curr_model)
+        # If the user did not create any boxes but customized, create an empty file
+        if bounding_boxes == "No bounding boxes":
+            with open(custom_labels_path, 'w') as labels_file:
+                labels_file.write("")
+        else:
+            custom_bounding_boxes = pd.DataFrame(bounding_boxes)[['class_index', 'centerX', 'centerY', 'boxWidth', 'boxHeight']]
+            custom_bounding_boxes.to_csv(path_or_buf=custom_labels_path, sep=' ', header=False, index=False)
+        # If user customized labels, compute a metric to evaluate how likely he is sending malicious custom labels
+        if not is_pending_model:
+            predicted_bounding_boxes = pd.read_csv(filepath_or_buffer=predicted_labels_path, sep=' ', names=['class_index', 'centerX', 'centerY', 'boxWidth', 'boxHeight', 'confidence'], index_col=False).to_dict(orient='records')
+            val_AP_classes = []
+            with open('models/' + curr_model + '/val_AP.txt', 'r') as val_AP_file:
+                val_AP_classes = [float(x) for x in list(filter(None, val_AP_file.read().split('\n')))]
+            cust_score = customization_score(predicted_bounding_boxes, bounding_boxes, val_AP_classes)
+            print("Customization score: " + str(cust_score))
+            if 'DB_HOSTNAME' in os.environ and 'DB_USERNAME' in os.environ and 'DB_PASSWORD' in os.environ:
+                update_db(request.remote_addr, image_name, cust_score)
+        if s3_interaction:
+            print("Saving customized labels for " + image_name + " to S3")
+            s3_client.upload_file(custom_labels_path, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model + '/labels' + extracted_set + labels_txt)
+    
+    if s3_interaction:
+        print("Uploading image " + image_name + " to the S3 bucket")
+        s3_client.upload_file(image_filepath, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model + '/images' + extracted_set + image_name)
     return jsonify({"message": "Bounding boxes saved successfully"}), 200
 
 # Load image from user
 @app.route("/", methods=["GET", "POST"])
 def predict():
-    download_files_if_updated(args.models_bucket, 'models')
+    if s3_interaction:
+        download_files_if_updated(args.models_bucket, 'models')
     models_list = os.listdir('models')
-    curr_model_pt = models_list[0].rsplit('.', 1)[0]
-    model = torch.hub.load('yolov5', 'custom', path="models/" + args.model + ".pt", source='local', autoshape=True)
+    curr_model = models_list[0]
+    model = torch.hub.load('yolov5', 'custom', path="models/" + args.model + "/" + args.model + ".pt", source='local', autoshape=True)
     model.eval()
     model.cpu()
-    num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_model_pt)
+    num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_model)
 
     if request.method == "POST":
-        curr_model_pt = request.form['model_selection'].rsplit('.', 1)[0]
+        curr_model = request.form['model_selection']
         if "file" not in request.files:
             return redirect(request.url)
         file = request.files["file"]
@@ -168,47 +185,45 @@ def predict():
             return
 
         # Load requested model
-        model = torch.hub.load('yolov5', 'custom', path="models/" + curr_model_pt + ".pt", source='local', autoshape=True)
+        model = torch.hub.load('yolov5', 'custom', path="models/" + curr_model + "/" + curr_model + ".pt", source='local', autoshape=True)
         print("Loaded model with classes: ")
         print(model.names)
         model.eval()
         model.cpu()
 
-        num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_model_pt)
+        num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_model)
 
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes))
 
         # Save image to temp static folder
-        original_images_folder = "static/original/" + curr_model_pt + "/"
+        original_images_folder = "static/original/" + curr_model + "/"
         if not os.path.exists(original_images_folder):
             os.makedirs(original_images_folder)
         original_image_loc = original_images_folder + image_name
         img.save(original_image_loc)
 
         results = model(img, size=640)
-        pred_bounding_boxes = results.pandas().xywhn[0][['class', 'xcenter', 'ycenter', 'width', 'height']]
+        pred_bounding_boxes = results.pandas().xywhn[0][['class', 'xcenter', 'ycenter', 'width', 'height', 'confidence']]
         # Save predictions to txt
-        if not os.path.exists('labels/predicted/' + curr_model_pt):
-            os.makedirs('labels/predicted/' + curr_model_pt)
-        pred_labels_path = 'labels/predicted/' + curr_model_pt + "/" + image_name.rsplit('.', 1)[0] + '.txt'
+        if not os.path.exists('labels/predicted/' + curr_model):
+            os.makedirs('labels/predicted/' + curr_model)
+        pred_labels_path = 'labels/predicted/' + curr_model + "/" + image_name.rsplit('.', 1)[0] + '.txt'
         pred_bounding_boxes.to_csv(path_or_buf=pred_labels_path, sep=' ', header=False, index=False)
-        json_pred = pred_bounding_boxes.to_json(orient="records")
+        # json_pred = pred_bounding_boxes.to_json(orient="records")
+        #results.render()
 
-        results.render()
         for img in results.imgs:
             img_base64 = Image.fromarray(img)
-            predicted_images_folder = "static/predictions/" + curr_model_pt + "/"
+            predicted_images_folder = "static/predictions/" + curr_model + "/"
             if not os.path.exists(predicted_images_folder):
                 os.makedirs(predicted_images_folder)
             predicted_image_loc = predicted_images_folder + "/predict_" + image_name
             img_base64.save(predicted_image_loc, format="JPEG")
-            if 'DB_HOSTNAME' in os.environ and 'DB_USERNAME' in os.environ and 'DB_PASSWORD' in os.environ:
-                update_db(request.remote_addr, image_name, json_pred)
         #return redirect(predicted_image_name)
-        return render_template("index.html", pred_image_loc=predicted_image_loc, orig_image_loc=original_image_loc, class_names=model.names, num_classes=len(model.names), models=models_list, num_models=len(models_list), curr_model_pt=curr_model_pt, num_training_images=num_training_images, num_validation_images=num_validation_images)
+        return render_template("index.html", pred_image_loc=predicted_image_loc, orig_image_loc=original_image_loc, class_names=model.names, num_classes=len(model.names), models=models_list, num_models=len(models_list), curr_model=curr_model, num_training_images=num_training_images, num_validation_images=num_validation_images)
 
-    return render_template("index.html", class_names=model.names, num_classes=len(model.names), models=models_list, num_models=len(models_list), curr_model_pt=curr_model_pt, num_training_images=num_training_images, num_validation_images=num_validation_images)
+    return render_template("index.html", class_names=model.names, num_classes=len(model.names), models=models_list, num_models=len(models_list), curr_model=curr_model, num_training_images=num_training_images, num_validation_images=num_validation_images)
 
 # Request model form
 @app.route("/request_model", methods=["GET", "POST"])
@@ -226,7 +241,8 @@ def request_model():
             file_like_object = file.stream._file  
             zipfile_ob = zipfile.ZipFile(file_like_object)
             zipfile_ob.extractall(path=pending_model_path)
-        upload_requested_model(args.training_data_bucket, pending_model_path)
+        if s3_interaction:
+            upload_pending_model(args.training_data_bucket, pending_model_path)
         return render_template("request_model.html")
 
     return render_template("request_model.html")
@@ -282,5 +298,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     #models_bucket = s3_resource.Bucket('justatoaster-yolov5-models')
     #training_data_bucket = s3_resource.Bucket('')
-    download_files_if_updated(args.models_bucket, 'models')
+    if s3_interaction:
+        download_files_if_updated(args.models_bucket, 'models')
     app.run(host="0.0.0.0", port=args.port)

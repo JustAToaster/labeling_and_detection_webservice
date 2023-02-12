@@ -18,13 +18,13 @@ let send_labels = () => {
     }
   };
   var img_name = document.getElementById("original_image").src.split("/").pop();
-  var curr_model_pt = document.getElementById('curr_model_pt').innerHTML;
+  var curr_model = document.getElementById('curr_model').innerHTML;
   var is_pending_model = document.title == "YOLOv5 pending models"
   // If the user decides to customize but does not create a single bounding box, treat the image as having no relevant objects
   if(use_custom_boxes && boundingBoxes.length == 0){
     boundingBoxes = "No bounding boxes";
   }
-  xhr.send(JSON.stringify({curr_model_pt, img_name, boundingBoxes, is_pending_model}));
+  xhr.send(JSON.stringify({curr_model, img_name, boundingBoxes, is_pending_model}));
 
   alert("Labels sent to the server!");
   reloadAsGet();
@@ -91,7 +91,7 @@ let customize_labels = () => {
     var centerY = (startY + endY) / 2 / canvas.height;
     var boxWidth = (endX - startX) / canvas.width;
     var boxHeight = (endY - startY) / canvas.height;
-    var class_index = prompt("What class is in this bounding box? Insert the number corresponding to the class.", "0");
+    var class_index = parseInt(prompt("What class is in this bounding box? Insert the number corresponding to the class.", "0")) || 0;
     boundingBoxes.push({
       startX: startX,
       startY: startY,

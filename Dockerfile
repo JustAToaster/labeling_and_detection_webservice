@@ -1,7 +1,7 @@
 FROM python:3.8-slim-buster
 
 RUN apt-get update
-RUN apt-get install ffmpeg libsm6 libxext6 default-mysql-client -y
+RUN apt-get install ffmpeg libsm6 libxext6 libpq-dev -y
 
 WORKDIR /service
 ADD . /service
