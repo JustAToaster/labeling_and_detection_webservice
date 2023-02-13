@@ -87,7 +87,7 @@ def ap_for_each_class(gt_boxes, det_boxes, num_classes, iou_threshold=0.5):
     """Args:
         boundingboxes: list of dictionaries of bounding boxes in the xywh format
         iou_threshold: IOU threshold indicating which detections will be considered TP or FP"""
-    ret = [0.0] * num_classes
+    ret = {}
     # Get classes of all bounding boxes separating them by classes
     gt_classes_only = []
     classes_bbs = {}
@@ -166,21 +166,38 @@ def ap_for_each_class(gt_boxes, det_boxes, num_classes, iou_threshold=0.5):
     # return {'per_class': ret, 'mAP': mAP}
     return ret
 
+def weighted_geometric_mean(validation_APs, distances, validation_weight=0.6, distance_weight=0.4):
+    weighted_products = np.power(validation_APs, validation_weight) * np.power(distances, distance_weight)
+    weighted_geometric_mean = np.power(weighted_products, 1/(validation_weight+distance_weight))
+    return weighted_geometric_mean
+
+# This function combines class scores so that scores closer to 1 are more important, still resulting in an overall higher score
+def combine_class_scores(class_scores, weight=3):
+    print("Power: ")
+    print(np.power(class_scores, weight))
+    print("Denominator:")
+    print(np.power(class_scores, weight - 1))
+    return np.sum(np.power(class_scores, weight)) / (np.sum(np.power(class_scores, weight - 1)) + 1e-5)
+
 def customization_score(predicted_labels, customized_labels, val_AP_classes):
+    # If there were no boxes in both the prediction and the customization, there is no data to go by, so we have no choice but to trust it
+    if not predicted_labels and not customized_labels:
+        return 0.0
+    
     cust_AP_classes = ap_for_each_class(gt_boxes=customized_labels, det_boxes=predicted_labels, num_classes=len(val_AP_classes), iou_threshold=0.5)
     # If validation AP for a certain class is high, but the customization is a lot different than the prediction, it might be a malicious request
     # Get list of classes with not null AP
-    present_classes_indices = [i for i, cust_AP_class in enumerate(cust_AP_classes) if cust_AP_class != 0]
+    present_classes_indices = list(cust_AP_classes.keys())
     
-    # If the custom labels are completely different, all the APs will be 0. Consider this an high risk request
+    # If there were no matching boxes at all, consider this an high risk request
     if not present_classes_indices:
         return 1.0
 
     present_val_AP_classes = np.array(val_AP_classes)[present_classes_indices]
-    print(present_val_AP_classes)
     
     # Treat 1-AP as a distance between the prediction and the customization
     present_cust_distance_classes = np.array([1-cust_AP_classes[i] for i in present_classes_indices])
 
-    # Potentially think of other methods to combine values (geometric or harmonic mean?)
-    return np.dot(present_val_AP_classes, present_cust_distance_classes)/len(present_classes_indices)
+    # For each class, compute the weighted geometric mean between the validation AP and the distance: trust the validation AP more
+    class_scores = weighted_geometric_mean(present_val_AP_classes, present_cust_distance_classes, validation_weight=0.6, distance_weight=0.4)
+    return combine_class_scores(class_scores, weight=3)

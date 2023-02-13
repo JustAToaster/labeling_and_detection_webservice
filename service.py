@@ -211,7 +211,7 @@ def predict():
         pred_labels_path = 'labels/predicted/' + curr_model + "/" + image_name.rsplit('.', 1)[0] + '.txt'
         pred_bounding_boxes.to_csv(path_or_buf=pred_labels_path, sep=' ', header=False, index=False)
         # json_pred = pred_bounding_boxes.to_json(orient="records")
-        #results.render()
+        results.render()
 
         for img in results.imgs:
             img_base64 = Image.fromarray(img)
