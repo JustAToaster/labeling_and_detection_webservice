@@ -6,10 +6,12 @@ matplotlib
 seaborn
 ipython
 psutil
-boto3
+scipy>=1.4.1
+protobuf<4.21.3
 
 Pillow
 PyYAML>=5.3.1
 tqdm>=4.41.0
 
+boto3
 psycopg2-binary

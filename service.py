@@ -18,10 +18,11 @@ from custom_metrics import customization_score
 
 app = Flask(__name__)
 
-s3_resource = boto3.resource('s3')
-s3_client = boto3.client('s3')
-
 s3_interaction = 0 if os.getenv('S3_INTERACTION') == '0' else 1
+
+if s3_interaction:
+    s3_resource = boto3.resource('s3')
+    s3_client = boto3.client('s3')
 
 def download_single_file_if_updated(bucket_name, filename):
     obj = s3_resource.Object(bucket_name, filename)
@@ -170,8 +171,9 @@ def save_labels():
         if not is_pending_model:
             predicted_bounding_boxes = pd.read_csv(filepath_or_buffer=predicted_labels_path, sep=' ', names=['class_index', 'centerX', 'centerY', 'boxWidth', 'boxHeight', 'confidence'], index_col=False).to_dict(orient='records')
             val_AP_classes = []
-            with open('models/' + curr_model + '/val_AP.txt', 'r') as val_AP_file:
-                val_AP_classes = [float(x) for x in list(filter(None, val_AP_file.read().split('\n')))]
+            if os.path.isfile('models/' + curr_model + '/val_AP.txt'):
+                with open('models/' + curr_model + '/val_AP.txt', 'r') as val_AP_file:
+                    val_AP_classes = [float(x) for x in list(filter(None, val_AP_file.read().split('\n')))]
             cust_score = customization_score(predicted_bounding_boxes, bounding_boxes, val_AP_classes)
             print("Customization score: " + str(cust_score))
             if 'DB_HOSTNAME' in os.environ and 'DB_USERNAME' in os.environ and 'DB_PASSWORD' in os.environ:
@@ -197,7 +199,9 @@ def predict():
     model = torch.hub.load('yolov5', 'custom', path="models/" + args.model + "/" + args.model + ".pt", source='local', autoshape=True)
     model.eval()
     model.cpu()
-    num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_model)
+    num_training_images, num_validation_images = 0, 0
+    if s3_interaction:
+        num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_model)
 
     if request.method == "POST":
         curr_model = request.form['model_selection']
@@ -215,7 +219,9 @@ def predict():
         model.eval()
         model.cpu()
 
-        num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_model)
+        num_training_images, num_validation_images = 0, 0
+        if s3_interaction:
+            num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_model)
 
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes))
@@ -288,7 +294,9 @@ def pending_models():
     curr_pending_model = pending_models_list[0].rsplit('.', 1)[0]
     with open('pending_models/' + curr_pending_model + '/classes.txt', 'r') as class_list_file:
             class_list = list(filter(None, class_list_file.read().split('\n')))
-    num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "pending_models/" + curr_pending_model)
+    num_training_images, num_validation_images = 0, 0
+    if s3_interaction:
+        num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_pending_model)
     min_training_set_size = 80
     min_validation_set_size = 20
 
@@ -303,7 +311,9 @@ def pending_models():
         pending_model_path = 'pending_models/' + curr_pending_model + '/'
         with open(pending_model_path + 'classes.txt', 'r') as class_list_file:
             class_list = list(filter(None, class_list_file.read().split('\n')))
-        num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "pending_models/" + curr_pending_model)
+        
+        if s3_interaction:
+            num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_pending_model)
 
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes))

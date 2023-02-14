@@ -212,8 +212,8 @@ def combine_class_scores(class_scores, weight=3):
 # If validation AP for a certain class is high, but the customization is a lot different than the prediction, it might be a malicious request
 def customization_score(predicted_labels, customized_labels, val_AP_classes):
     
-    # If there were no boxes in both the prediction and the customization, there is no data to go by, so we have no choice but to trust it
-    if not predicted_labels and not customized_labels:
+    # If there is no validation data or there were no boxes in both the prediction and the customization, there is no data to go by, so we have no choice but to trust it
+    if not val_AP_classes or (not predicted_labels and not customized_labels):
         return 0.0
     
     #cust_AP_classes = ap_for_each_class(gt_boxes=customized_labels, det_boxes=predicted_labels, iou_threshold=0.5)
