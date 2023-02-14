@@ -23,6 +23,16 @@ s3_client = boto3.client('s3')
 
 s3_interaction = 0 if os.getenv('S3_INTERACTION') == '0' else 1
 
+def download_single_file_if_updated(bucket_name, filename):
+    obj = s3_resource.Object(bucket_name, filename)
+    remote_last_modified = int(obj.last_modified.strftime('%s'))
+    if os.path.exists(obj.key) and remote_last_modified == int(os.path.getmtime(obj.key)):
+            print("File " + obj.key + " is up to date")
+    else:
+        print("Downloading " + filename + " from the S3 bucket")
+        obj.download_file(filename)
+        os.utime(obj.key, (remote_last_modified, remote_last_modified))
+
 def download_files_if_updated(bucket_name, s3_folder):
     bucket = s3_resource.Bucket(bucket_name)
     if not os.path.exists(s3_folder):
@@ -91,7 +101,7 @@ def count_dataset_size(bucket_name, model_path):
 
     return training_count, validation_count
 
-def update_db(remote_addr, img_name, cust_score):
+def update_db(remote_addr, img_name, model_name, cust_score):
     conn = psycopg2.connect(
     host=os.getenv('DB_HOSTNAME'),
     database="yolov5_predictions",
@@ -99,16 +109,28 @@ def update_db(remote_addr, img_name, cust_score):
     password=os.getenv('DB_PASSWORD'))
 
     cur = conn.cursor()
-    sql = "INSERT INTO requests (UserAddress, ImageName, CustomizationScore) VALUES (%s, %s, %s)"
-    val = (str(remote_addr), str(img_name), str(cust_score))
+    sql = "INSERT INTO requests (UserAddress, ModelName, ImageName, CustomizationScore) VALUES (%s, %s, %s)"
+    val = (str(remote_addr), str(model_name), str(img_name), str(cust_score))
     cur.execute(sql, val)
 
     conn.commit()
     cur.close()
     conn.close()
 
+def check_user(user_addr):
+    if s3_interaction:
+        download_single_file_if_updated(args.models_bucket, 'report_list.txt')
+    with open('report_list.txt', 'r') as report_list_file:
+        reported_users_list = [line.split('\t')[0] for line in list(filter(None, report_list_file.read().split('\n')))]
+    if user_addr in reported_users_list:
+        print("The reported user with address " + user_addr + " is trying to access the website")
+        return True
+    return False
+
 @app.route('/save_labels', methods=['POST'])
 def save_labels():
+    if check_user(request.remote_addr):
+        return render_template("reported.html")
     request_data = json.loads(request.data)
     curr_model = request_data['curr_model']
     image_name = request_data['img_name']
@@ -153,7 +175,7 @@ def save_labels():
             cust_score = customization_score(predicted_bounding_boxes, bounding_boxes, val_AP_classes)
             print("Customization score: " + str(cust_score))
             if 'DB_HOSTNAME' in os.environ and 'DB_USERNAME' in os.environ and 'DB_PASSWORD' in os.environ:
-                update_db(request.remote_addr, image_name, cust_score)
+                update_db(request.remote_addr, curr_model, image_name, cust_score)
         if s3_interaction:
             print("Saving customized labels for " + image_name + " to S3")
             s3_client.upload_file(custom_labels_path, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model + '/labels' + extracted_set + labels_txt)
@@ -168,6 +190,8 @@ def save_labels():
 def predict():
     if s3_interaction:
         download_files_if_updated(args.models_bucket, 'models')
+    if check_user(request.remote_addr):
+        return render_template("reported.html")
     models_list = os.listdir('models')
     curr_model = models_list[0]
     model = torch.hub.load('yolov5', 'custom', path="models/" + args.model + "/" + args.model + ".pt", source='local', autoshape=True)
@@ -182,7 +206,7 @@ def predict():
         file = request.files["file"]
         image_name = file.filename
         if not file:
-            return
+            return redirect(request.url)
 
         # Load requested model
         model = torch.hub.load('yolov5', 'custom', path="models/" + curr_model + "/" + curr_model + ".pt", source='local', autoshape=True)
@@ -228,6 +252,8 @@ def predict():
 # Request model form
 @app.route("/request_model", methods=["GET", "POST"])
 def request_model():
+    if check_user(request.remote_addr):
+        return render_template("reported.html")
 
     if request.method == "POST":
         model_name = request.form['model_name']
@@ -250,7 +276,11 @@ def request_model():
 # Send data for pending models
 @app.route("/pending_models", methods=["GET", "POST"])
 def pending_models():
-    get_pending_models(args.training_data_bucket, 'pending_models/', '/classes.txt')
+    if check_user(request.remote_addr):
+        return render_template("reported.html")
+    
+    if s3_interaction:
+        get_pending_models(args.training_data_bucket, 'pending_models/', '/classes.txt')
     pending_models_list = os.listdir('pending_models')
     if not pending_models_list:
         no_pending_models = True
