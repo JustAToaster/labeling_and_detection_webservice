@@ -1,8 +1,6 @@
 import sys
-from collections import Counter
 
 import numpy as np
-import pandas as pd
 
 def xywh2xyxy(box):
     x, y, w_half, h_half = box['centerX'], box['centerY'], box['boxWidth']/2, box['boxHeight']/2
@@ -166,7 +164,7 @@ def ap_for_each_class(gt_boxes, det_boxes, iou_threshold=0.5):
     # return {'per_class': ret, 'mAP': mAP}
     return aps_dict
 
-def iou_dist_each_class(predicted_boxes, custom_boxes, num_classes):
+def iou_dist_each_class(predicted_boxes, custom_boxes):
     """Args:
         boundingboxes: list of dictionaries of bounding boxes in the xywh format"""
     iou_sum = {}
@@ -219,7 +217,7 @@ def customization_score(predicted_labels, customized_labels, val_AP_classes):
         return 0.0
     
     #cust_AP_classes = ap_for_each_class(gt_boxes=customized_labels, det_boxes=predicted_labels, iou_threshold=0.5)
-    iou_distances_classes = iou_dist_each_class(predicted_boxes=predicted_labels, custom_boxes=customized_labels, num_classes=len(val_AP_classes))
+    iou_distances_classes = iou_dist_each_class(predicted_boxes=predicted_labels, custom_boxes=customized_labels)
     present_classes_indices = list(iou_distances_classes.keys())
     
     # If there were no matching boxes at all, consider this a high risk request
