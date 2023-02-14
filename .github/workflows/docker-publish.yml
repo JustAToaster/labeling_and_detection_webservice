@@ -1,0 +1,30 @@
+name: Docker Publish
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/yolov5-labeling-detection-webservice
+  VERSION: latest
+
+jobs:
+  push-image:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Log into Docker Hub registry
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+      
+      - name: Build the Docker image
+        run: docker build --tag ${IMAGE_NAME}:${VERSION} .
+        
+      - name: Push the Docker image
+        run: docker push ${IMAGE_NAME}:${VERSION}
