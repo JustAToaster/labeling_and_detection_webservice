@@ -287,6 +287,8 @@ def pending_models():
     
     if s3_interaction:
         get_pending_models(args.training_data_bucket, 'pending_models/', '/classes.txt')
+    if not os.path.exists('pending_models'):
+        os.makedirs('pending_models')
     pending_models_list = os.listdir('pending_models')
     if not pending_models_list:
         no_pending_models = True
