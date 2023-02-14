@@ -83,11 +83,11 @@ def calculate_ap_11_point_interp(rec, prec, recall_vals=11):
     rhoInterp = [i[1] for i in cc]
     return [ap, rhoInterp, recallValues, None]
 
-def ap_for_each_class(gt_boxes, det_boxes, num_classes, iou_threshold=0.5):
+def ap_for_each_class(gt_boxes, det_boxes, iou_threshold=0.5):
     """Args:
         boundingboxes: list of dictionaries of bounding boxes in the xywh format
         iou_threshold: IOU threshold indicating which detections will be considered TP or FP"""
-    ret = {}
+    aps_dict = {}
     # Get classes of all bounding boxes separating them by classes
     gt_classes_only = []
     classes_bbs = {}
@@ -149,7 +149,7 @@ def ap_for_each_class(gt_boxes, det_boxes, num_classes, iou_threshold=0.5):
         prec = np.divide(acc_TP, (acc_FP + acc_TP))
         [ap, mpre, mrec, _] = calculate_ap_11_point_interp(rec, prec)
         # add class result in the dictionary to be returned
-        ret[c] = ap
+        aps_dict[c] = ap
         #ret[c] = {
         #    'precision': prec,
         #    'recall': rec,
@@ -164,7 +164,42 @@ def ap_for_each_class(gt_boxes, det_boxes, num_classes, iou_threshold=0.5):
     # For mAP, only the classes in the gt set should be considered
     # mAP = sum([v['AP'] for k, v in ret.items() if k in gt_classes_only]) / len(gt_classes_only)
     # return {'per_class': ret, 'mAP': mAP}
-    return ret
+    return aps_dict
+
+def iou_dist_each_class(predicted_boxes, custom_boxes, num_classes):
+    """Args:
+        boundingboxes: list of dictionaries of bounding boxes in the xywh format"""
+    iou_sum = {}
+    iou_distances = {}
+    # Get classes of all bounding boxes separating them by classes
+    pred_classes_only = []
+    classes_bbs = {}
+    for bb in predicted_boxes:
+        c = bb['class_index']
+        pred_classes_only.append(c)
+        classes_bbs.setdefault(c, {'pred': [], 'custom': []})
+        classes_bbs[c]['pred'].append(bb)
+    pred_classes_only = list(set(pred_classes_only))
+    for bb in custom_boxes:
+        c = bb['class_index']
+        classes_bbs.setdefault(c, {'pred': [], 'custom': []})
+        classes_bbs[c]['custom'].append(bb)
+
+    for c in pred_classes_only:
+        iou_sum[c] = 0.0
+
+    for pred_box in predicted_boxes:
+        iouMax = 0.0
+        c = pred_box['class_index']
+        # Given the detection with class c, find custom box with class c and the highest iou with the detection
+        for custom_box in classes_bbs[c]['custom']:
+            iou = bb_intersection_over_union(pred_box, custom_box)
+            if iou > iouMax:
+                iouMax = iou
+        iou_sum[c] += iouMax
+    for c in pred_classes_only:
+        iou_distances[c] = 1.0 - iou_sum[c]/len(classes_bbs[c]['pred'])
+    return iou_distances
 
 def weighted_geometric_mean(validation_APs, distances, validation_weight=0.6, distance_weight=0.4):
     weighted_products = np.power(validation_APs, validation_weight) * np.power(distances, distance_weight)
@@ -173,31 +208,26 @@ def weighted_geometric_mean(validation_APs, distances, validation_weight=0.6, di
 
 # This function combines class scores so that scores closer to 1 are more important, still resulting in an overall higher score
 def combine_class_scores(class_scores, weight=3):
-    print("Power: ")
     print(np.power(class_scores, weight))
-    print("Denominator:")
-    print(np.power(class_scores, weight - 1))
     return np.sum(np.power(class_scores, weight)) / (np.sum(np.power(class_scores, weight - 1)) + 1e-5)
 
+# If validation AP for a certain class is high, but the customization is a lot different than the prediction, it might be a malicious request
 def customization_score(predicted_labels, customized_labels, val_AP_classes):
+    
     # If there were no boxes in both the prediction and the customization, there is no data to go by, so we have no choice but to trust it
     if not predicted_labels and not customized_labels:
         return 0.0
     
-    cust_AP_classes = ap_for_each_class(gt_boxes=customized_labels, det_boxes=predicted_labels, num_classes=len(val_AP_classes), iou_threshold=0.5)
-    # If validation AP for a certain class is high, but the customization is a lot different than the prediction, it might be a malicious request
-    # Get list of classes with not null AP
-    present_classes_indices = list(cust_AP_classes.keys())
+    #cust_AP_classes = ap_for_each_class(gt_boxes=customized_labels, det_boxes=predicted_labels, iou_threshold=0.5)
+    iou_distances_classes = iou_dist_each_class(predicted_boxes=predicted_labels, custom_boxes=customized_labels, num_classes=len(val_AP_classes))
+    present_classes_indices = list(iou_distances_classes.keys())
     
-    # If there were no matching boxes at all, consider this an high risk request
+    # If there were no matching boxes at all, consider this a high risk request
     if not present_classes_indices:
         return 1.0
 
     present_val_AP_classes = np.array(val_AP_classes)[present_classes_indices]
+    present_iou_distance_classes = np.array([iou_distances_classes[i] for i in present_classes_indices])
     
-    # Treat 1-AP as a distance between the prediction and the customization
-    present_cust_distance_classes = np.array([1-cust_AP_classes[i] for i in present_classes_indices])
-
-    # For each class, compute the weighted geometric mean between the validation AP and the distance: trust the validation AP more
-    class_scores = weighted_geometric_mean(present_val_AP_classes, present_cust_distance_classes, validation_weight=0.6, distance_weight=0.4)
+    class_scores = weighted_geometric_mean(present_val_AP_classes, present_iou_distance_classes, validation_weight=0.4, distance_weight=0.6)
     return combine_class_scores(class_scores, weight=3)
