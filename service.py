@@ -2,6 +2,7 @@ import io
 import argparse
 import os
 from PIL import Image
+import yaml
 
 from random import random
 
@@ -24,6 +25,35 @@ if s3_interaction:
     s3_resource = boto3.resource('s3')
     s3_client = boto3.client('s3')
 
+def read_model_data_yaml(model_name, is_pending=False):
+    model_folder_prefix = ''
+    if is_pending:
+        model_folder_prefix = 'pending_'
+    with open(model_folder_prefix + 'models/' + model_name + '/' + model_name + '.yaml', 'r') as file:
+        model_data = yaml.full_load(file)
+    return model_data
+
+def write_model_data_yaml(model_name, class_list=[], num_training_images=0, num_validation_images=0, validation_APs=[], is_pending=False):
+    model_folder_prefix = ''
+    if is_pending:
+        model_folder_prefix = 'pending_'
+    model_data = {}
+    model_data['train'] = '../' + model_name + '/images/train/'
+    model_data['val'] = '../' + model_name + '/images/valid/'
+    model_data['nc'] = len(class_list)
+    model_data['names'] = class_list
+    
+    model_data['training_set_size'] = num_training_images
+    model_data['validation_set_size'] = num_validation_images
+
+    model_data['validation_APs'] = validation_APs
+
+    model_folder_path = model_folder_prefix + 'models/' + model_name + '/'
+    if not os.path.exists(model_folder_path):
+        os.makedirs(model_folder_path)
+    with open(model_folder_path + model_name + '.yaml', 'w') as file:
+        yaml.dump(model_data, file)
+
 def download_single_file_if_updated(bucket_name, filename):
     obj = s3_resource.Object(bucket_name, filename)
     remote_last_modified = int(obj.last_modified.strftime('%s'))
@@ -34,42 +64,20 @@ def download_single_file_if_updated(bucket_name, filename):
         obj.download_file(filename)
         os.utime(obj.key, (remote_last_modified, remote_last_modified))
 
-def download_files_if_updated(bucket_name, s3_folder):
-    bucket = s3_resource.Bucket(bucket_name)
-    if not os.path.exists(s3_folder):
-        os.makedirs(s3_folder)
-    for obj in bucket.objects.filter(Prefix=s3_folder):
-        remote_last_modified = int(obj.last_modified.strftime('%s'))
-        if not os.path.exists(os.path.dirname(obj.key)):
-            os.makedirs(os.path.dirname(obj.key))
-        if obj.key[-1] == '/':
-            continue
-        if os.path.exists(obj.key) and remote_last_modified == int(os.path.getmtime(obj.key)):
-            print("File " + obj.key + " is up to date")
-        else:
-            print("Downloading " + obj.key + " from the S3 bucket")
-            bucket.download_file(obj.key, obj.key)
-            os.utime(obj.key, (remote_last_modified, remote_last_modified))
-
-def get_pending_models(bucket_name, s3_folder, txt_file):
+def get_models_from_s3(bucket_name, s3_folder):
     bucket = s3_resource.Bucket(bucket_name)
     result = s3_client.list_objects(Bucket=bucket.name, Prefix=s3_folder, Delimiter='/')
-    pending_models_list = [o.get('Prefix').split('/')[1] for o in result.get('CommonPrefixes')]
-    for pending_model in pending_models_list:
-        if not os.path.exists(s3_folder + pending_model):
-            os.makedirs(s3_folder + pending_model)
-        class_file_name = s3_folder + pending_model + txt_file
-        remote_last_modified = int(s3_resource.ObjectSummary(bucket_name=bucket.name, key=class_file_name).last_modified.strftime('%s'))
-        if os.path.exists(class_file_name) and remote_last_modified == int(os.path.getmtime(class_file_name)):
-            print("File " + class_file_name + " is up to date")
-        else:
-            print("Downloading " + class_file_name + " from the S3 bucket")
-            bucket.download_file(class_file_name, class_file_name)
-            os.utime(class_file_name, (remote_last_modified, remote_last_modified))
+    models_list = [o.get('Prefix').split('/')[1] for o in result.get('CommonPrefixes')]
+    for model in models_list:
+        if not os.path.exists(s3_folder + model):
+            os.makedirs(s3_folder + model)
+        # Download model data
+        download_single_file_if_updated(bucket_name, s3_folder + model + '/' + model + '.yaml')
+        # Download the model itself
+        download_single_file_if_updated(bucket_name, s3_folder + model + '/' + model + '.pt')
 
 def upload_pending_model(bucket_name, pending_model_path):
-    print("Uploading class list for " + pending_model_path + " to the S3 bucket")
-    s3_client.upload_file(pending_model_path + 'classes.txt', bucket_name, pending_model_path + 'classes.txt')
+    num_training_images, num_validation_images = 0, 0
     for labels_filename in os.listdir(pending_model_path + 'labels/'):
         labels_filepath = os.path.join(pending_model_path + 'labels/', labels_filename)
         image_filepath = labels_filepath.rsplit('.', 1)[0] + '.jpg'
@@ -77,12 +85,15 @@ def upload_pending_model(bucket_name, pending_model_path):
         extracted_set = "/"
         # Randomize training and validation split
         if random() <= 0.8:
+            num_training_images = num_training_images + 1
             extracted_set = '/train/'
         else:
+            num_validation_images = num_validation_images + 1
             extracted_set = '/valid/'
         print("Uploading image and labels for " + image_filename + " to the S3 bucket")
         s3_client.upload_file(labels_filepath, bucket_name, pending_model_path + extracted_set + 'labels/' + labels_filename)
         s3_client.upload_file(image_filepath, bucket_name, pending_model_path + extracted_set + 'images/' + image_filename)
+    return num_training_images, num_validation_images
 
 # Use paginator in case training set size > 1000 (S3 API limit)
 def count_dataset_size(bucket_name, model_path):
@@ -156,7 +167,7 @@ def save_labels():
         predicted_bounding_boxes = pd.read_csv(filepath_or_buffer=predicted_labels_path, sep=' ', names=['class_index', 'centerX', 'centerY', 'boxWidth', 'boxHeight', 'confidence'], index_col=False).drop('confidence', axis=1).to_csv(path_or_buf=predicted_labels_path, sep=' ', header=False, index=False)
         if s3_interaction:
             print("The bounding boxes array is empty, saving predicted labels for " + image_name + " to S3")
-            s3_client.upload_file(predicted_labels_path, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model + '/labels' + extracted_set + labels_txt)
+            s3_client.upload_file(predicted_labels_path, args.models_bucket, model_folder_prefix + 'models/' + curr_model + '/labels' + extracted_set + labels_txt)
     else:
         if not os.path.exists('labels/custom/' + curr_model):
             os.makedirs('labels/custom/' + curr_model)
@@ -170,38 +181,34 @@ def save_labels():
         # If user customized labels, compute a metric to evaluate how likely he is sending malicious custom labels
         if not is_pending_model:
             predicted_bounding_boxes = pd.read_csv(filepath_or_buffer=predicted_labels_path, sep=' ', names=['class_index', 'centerX', 'centerY', 'boxWidth', 'boxHeight', 'confidence'], index_col=False).to_dict(orient='records')
-            val_AP_classes = []
-            if os.path.isfile('models/' + curr_model + '/val_AP.txt'):
-                with open('models/' + curr_model + '/val_AP.txt', 'r') as val_AP_file:
-                    val_AP_classes = [float(x) for x in list(filter(None, val_AP_file.read().split('\n')))]
+            val_AP_classes = read_model_data_yaml(curr_model, is_pending=False)['validation_APs']
             cust_score = customization_score(predicted_bounding_boxes, bounding_boxes, val_AP_classes)
             print("Customization score: " + str(cust_score))
             if 'DB_HOSTNAME' in os.environ and 'DB_USERNAME' in os.environ and 'DB_PASSWORD' in os.environ:
                 update_db(request.remote_addr, curr_model, image_name, cust_score)
         if s3_interaction:
             print("Saving customized labels for " + image_name + " to S3")
-            s3_client.upload_file(custom_labels_path, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model + '/labels' + extracted_set + labels_txt)
+            s3_client.upload_file(custom_labels_path, args.models_bucket, model_folder_prefix + 'models/' + curr_model + '/labels' + extracted_set + labels_txt)
     
     if s3_interaction:
         print("Uploading image " + image_name + " to the S3 bucket")
-        s3_client.upload_file(image_filepath, args.training_data_bucket, model_folder_prefix + 'models/' + curr_model + '/images' + extracted_set + image_name)
+        s3_client.upload_file(image_filepath, args.models_bucket, model_folder_prefix + 'models/' + curr_model + '/images' + extracted_set + image_name)
     return jsonify({"message": "Bounding boxes saved successfully"}), 200
 
 # Load image from user
 @app.route("/", methods=["GET", "POST"])
 def predict():
     if s3_interaction:
-        download_files_if_updated(args.models_bucket, 'models')
+        get_models_from_s3(args.models_bucket, 'models/')
     if check_user(request.remote_addr):
         return render_template("reported.html")
     models_list = os.listdir('models')
     curr_model = models_list[0]
     model = torch.hub.load('yolov5', 'custom', path="models/" + args.model + "/" + args.model + ".pt", source='local', autoshape=True)
+    model_data = read_model_data_yaml(curr_model, is_pending=False)
+    num_training_images, num_validation_images = model_data['training_set_size'], model_data['validation_set_size']
     model.eval()
     model.cpu()
-    num_training_images, num_validation_images = 0, 0
-    if s3_interaction:
-        num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_model)
 
     if request.method == "POST":
         curr_model = request.form['model_selection']
@@ -214,14 +221,12 @@ def predict():
 
         # Load requested model
         model = torch.hub.load('yolov5', 'custom', path="models/" + curr_model + "/" + curr_model + ".pt", source='local', autoshape=True)
+        model_data = read_model_data_yaml(curr_model)
+        num_training_images, num_validation_images = model_data['training_set_size'], model_data['validation_set_size']
         print("Loaded model with classes: ")
         print(model.names)
         model.eval()
         model.cpu()
-
-        num_training_images, num_validation_images = 0, 0
-        if s3_interaction:
-            num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_model)
 
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes))
@@ -263,18 +268,18 @@ def request_model():
 
     if request.method == "POST":
         model_name = request.form['model_name']
-        class_list = request.form['class_list']
+        class_list = [line.rstrip() for line in list(filter(None, request.form['class_list'].split('\n')))]
         pending_model_path = 'pending_models/' + model_name + '/'
-        # Write class list
-        with open(pending_model_path + 'classes.txt', 'w') as class_list_file:
-            class_list_file.write(class_list)
+        # Write starting yaml file
+        num_training_images, num_validation_images = 0, 0
         if "file" in request.files and request.files["file"]:
             file = request.files["file"]
             file_like_object = file.stream._file  
             zipfile_ob = zipfile.ZipFile(file_like_object)
             zipfile_ob.extractall(path=pending_model_path)
         if s3_interaction:
-            upload_pending_model(args.training_data_bucket, pending_model_path)
+            num_training_images, num_validation_images = upload_pending_model(args.models_bucket, pending_model_path)
+        write_model_data_yaml(model_name, class_list, num_training_images, num_validation_images, is_pending=True)
         return render_template("request_model.html")
 
     return render_template("request_model.html")
@@ -286,7 +291,7 @@ def pending_models():
         return render_template("reported.html")
     
     if s3_interaction:
-        get_pending_models(args.training_data_bucket, 'pending_models/', '/classes.txt')
+        get_models_from_s3(args.models_bucket, 'pending_models/')
     if not os.path.exists('pending_models'):
         os.makedirs('pending_models')
     pending_models_list = os.listdir('pending_models')
@@ -294,11 +299,9 @@ def pending_models():
         no_pending_models = True
         return render_template("pending_models.html", no_pending_models=no_pending_models)
     curr_pending_model = pending_models_list[0].rsplit('.', 1)[0]
-    with open('pending_models/' + curr_pending_model + '/classes.txt', 'r') as class_list_file:
-            class_list = list(filter(None, class_list_file.read().split('\n')))
-    num_training_images, num_validation_images = 0, 0
-    if s3_interaction:
-        num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_pending_model)
+    pending_model_data = read_model_data_yaml(curr_pending_model, is_pending=True)
+    class_list, num_training_images, num_validation_images = pending_model_data['names'], pending_model_data['training_set_size'], pending_model_data['validation_set_size']
+
     min_training_set_size = 80
     min_validation_set_size = 20
 
@@ -309,13 +312,10 @@ def pending_models():
         file = request.files["file"]
         image_name = file.filename
         if not file:
-            return
-        pending_model_path = 'pending_models/' + curr_pending_model + '/'
-        with open(pending_model_path + 'classes.txt', 'r') as class_list_file:
-            class_list = list(filter(None, class_list_file.read().split('\n')))
-        
-        if s3_interaction:
-            num_training_images, num_validation_images = count_dataset_size(args.training_data_bucket, "models/" + curr_pending_model)
+            return redirect(request.url)
+
+        pending_model_data = read_model_data_yaml(curr_pending_model, is_pending=True)
+        class_list, num_training_images, num_validation_images = pending_model_data['names'], pending_model_data['training_set_size'], pending_model_data['validation_set_size']
 
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes))
@@ -335,11 +335,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Flask web app for YOLOv5")
     parser.add_argument("--port", default=32332, type=int, help="Service port")
     parser.add_argument("--model", default="base_yolov5s", type=str, help="Default model to use")
-    parser.add_argument("--training_data_bucket", default="justatoaster-yolov5-training-data", type=str, help="Training data S3 bucket name")
+    #parser.add_argument("--training_data_bucket", default="justatoaster-yolov5-training-data", type=str, help="Training data S3 bucket name")
     parser.add_argument("--models_bucket", default="justatoaster-yolov5-models", type=str, help="YOLOv5 models S3 bucket name")
     args = parser.parse_args()
     #models_bucket = s3_resource.Bucket('justatoaster-yolov5-models')
     #training_data_bucket = s3_resource.Bucket('')
     if s3_interaction:
-        download_files_if_updated(args.models_bucket, 'models')
+        get_models_from_s3(args.models_bucket, 'models/')
+        get_models_from_s3(args.models_bucket, 'pending_models/')
     app.run(host="0.0.0.0", port=args.port)
