@@ -15,7 +15,7 @@ After looking at the image with the predicted bounding boxes, the user can decid
   <img src="https://user-images.githubusercontent.com/33027100/219945080-545f5f3c-73d4-4c0c-a717-3649758ab01c.png">
 </p>
 
-The bounding boxes are drawn with JavaScript client-side code and sent to the server after clicking the corresponding button.
+After drawing a bounding box thanks to JavaScript client-side code, the user is asked with the **prompt()** function which class corresponds to that box and, after drawing all the boxes, the labels can be sent to the server by clicking the corresponding button.
 
 <p align="center">
   <img src="https://user-images.githubusercontent.com/33027100/219945169-eb76e9a6-76e8-4a59-a246-f3e7e273e820.png">
