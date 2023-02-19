@@ -1,4 +1,4 @@
-# labeling_and_detection_webservice
+# Labeling and detection YOLOv5 webservice
 YOLOv5 labeling and detection web service with Flask and JavaScript. Created for my Master's Thesis along with the [cloud infrastructure in this repository](https://github.com/JustAToaster/CloudSystems_kops_terraform_cluster).
 ## Features
 ### Inference
