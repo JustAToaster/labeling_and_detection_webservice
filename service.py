@@ -1,6 +1,7 @@
 import io
 import argparse
 import os
+import shutil
 from PIL import Image
 import yaml
 
@@ -71,21 +72,31 @@ def download_single_file_if_updated(bucket_name, filename):
 def get_models_from_s3(bucket_name, s3_folder):
     bucket = s3_resource.Bucket(bucket_name)
     result = s3_client.list_objects(Bucket=bucket.name, Prefix=s3_folder, Delimiter='/')
-    models_list = [o.get('Prefix').split('/')[1] for o in result.get('CommonPrefixes')]
+    models_list = []
+    common_prefixes = result.get('CommonPrefixes')
+    if common_prefixes:
+        models_list = [o.get('Prefix').split('/')[1] for o in common_prefixes]
     for model in models_list:
         if not os.path.exists(s3_folder + model):
             os.makedirs(s3_folder + model)
         # Download model information
         download_single_file_if_updated(bucket_name, s3_folder + model + '/' + model + '.yaml')
-        # Download the model itself
-        download_single_file_if_updated(bucket_name, s3_folder + model + '/' + model + '.pt')
+        if s3_folder != 'pending_models/':
+            # Download the model itself
+            download_single_file_if_updated(bucket_name, s3_folder + model + '/' + model + '.pt')
+    # Delete local folders that do not match with a remote model
+    local_models = os.listdir(s3_folder)
+    for local_model in local_models:
+        if local_model not in models_list:
+            shutil.rmtree(s3_folder + local_model, ignore_errors=True)
+
 
 def upload_pending_model(bucket_name, pending_model_path):
     num_training_images, num_validation_images = 0, 0
-    for labels_filename in os.listdir(pending_model_path + 'labels/'):
-        labels_filepath = os.path.join(pending_model_path + 'labels/', labels_filename)
-        image_filepath = labels_filepath.rsplit('.', 1)[0] + '.jpg'
-        image_filename = labels_filename.rsplit('.', 1)[0] + '.jpg'
+    for labels_filename in os.listdir(pending_model_path + '/labels/'):
+        labels_filepath = os.path.join(pending_model_path + '/labels/', labels_filename)
+        image_filename = labels_filename[:-3] + 'jpg'
+        image_filepath = os.path.join(pending_model_path + '/images/', image_filename)
         extracted_set = "/"
         # Randomize training and validation split
         if random() <= 0.8:
@@ -95,8 +106,8 @@ def upload_pending_model(bucket_name, pending_model_path):
             num_validation_images = num_validation_images + 1
             extracted_set = '/valid/'
         print("Uploading image and labels for " + image_filename + " to the S3 bucket")
-        s3_client.upload_file(labels_filepath, bucket_name, pending_model_path + extracted_set + 'labels/' + labels_filename)
-        s3_client.upload_file(image_filepath, bucket_name, pending_model_path + extracted_set + 'images/' + image_filename)
+        s3_client.upload_file(labels_filepath, bucket_name, pending_model_path + '/labels' + extracted_set + labels_filename)
+        s3_client.upload_file(image_filepath, bucket_name, pending_model_path + '/images' + extracted_set + image_filename)
     return num_training_images, num_validation_images
 
 # Use paginator in case training set size > 1000 (S3 API limit)
@@ -104,6 +115,7 @@ def count_updated_dataset_size(s3_client, bucket_name, model_path):
     paginator = s3_client.get_paginator('list_objects_v2')
     training_count = 0
     validation_count = 0
+    print("Count " + model_path)
     for result in paginator.paginate(Bucket=bucket_name, Prefix=model_path + '/labels/train/', Delimiter='/'):
         key_count = result.get('KeyCount')
         if key_count is not None:
@@ -119,12 +131,12 @@ def count_updated_dataset_size(s3_client, bucket_name, model_path):
 def update_db(remote_addr, img_name, model_name, cust_score):
     conn = psycopg2.connect(
     host=os.getenv('DB_HOSTNAME'),
-    database="yolov5_predictions",
+    database="postgres",
     user=os.getenv('DB_USERNAME'),
     password=os.getenv('DB_PASSWORD'))
 
     cur = conn.cursor()
-    sql = "INSERT INTO requests (UserAddress, ModelName, ImageName, CustomizationScore) VALUES (%s, %s, %s)"
+    sql = "INSERT INTO yolov5_predictions.requests (UserAddress, ModelName, ImageName, CustomizationScore) VALUES (%s, %s, %s, %s)"
     val = (str(remote_addr), str(model_name), str(img_name), str(cust_score))
     cur.execute(sql, val)
 
@@ -154,7 +166,7 @@ def save_labels():
     model_folder_prefix = ""
     if is_pending_model:
         model_folder_prefix = "pending_"
-    labels_txt = image_name.rsplit('.', 1)[0] + '.txt'
+    labels_txt = image_name[:-3] + 'txt'
     static_model_path = "static/original/" + curr_model + "/"
     predicted_labels_path = 'labels/predicted/' + curr_model + "/" + labels_txt
     custom_labels_path = 'labels/custom/' + curr_model + "/" + labels_txt
@@ -207,7 +219,7 @@ def predict():
         return render_template("reported.html")
     models_list = os.listdir('models')
     curr_model = models_list[0]
-    model = torch.hub.load('yolov5', 'custom', path="models/" + args.model + "/" + args.model + ".pt", source='local', autoshape=True)
+    model = torch.hub.load('yolov5', 'custom', path="models/" + args.model + "/" + args.model + ".pt", source='local', autoshape=True, force_reload=True)
     model_data = read_model_data_yaml(curr_model, is_pending=False)
     num_training_images, num_validation_images = model_data['training_set_size'], model_data['validation_set_size']
     model.eval()
@@ -223,7 +235,7 @@ def predict():
             return redirect(request.url)
 
         # Load requested model
-        model = torch.hub.load('yolov5', 'custom', path="models/" + curr_model + "/" + curr_model + ".pt", source='local', autoshape=True)
+        model = torch.hub.load('yolov5', 'custom', path="models/" + curr_model + "/" + curr_model + ".pt", source='local', autoshape=True, force_reload=True)
         model_data = read_model_data_yaml(curr_model)
         num_training_images, num_validation_images = model_data['training_set_size'], model_data['validation_set_size']
         print("Loaded model with classes: ")
@@ -246,12 +258,12 @@ def predict():
         # Save predictions to txt
         if not os.path.exists('labels/predicted/' + curr_model):
             os.makedirs('labels/predicted/' + curr_model)
-        pred_labels_path = 'labels/predicted/' + curr_model + "/" + image_name.rsplit('.', 1)[0] + '.txt'
+        pred_labels_path = 'labels/predicted/' + curr_model + "/" + image_name[:-3] + 'txt'
         pred_bounding_boxes.to_csv(path_or_buf=pred_labels_path, sep=' ', header=False, index=False)
         # json_pred = pred_bounding_boxes.to_json(orient="records")
         results.render()
 
-        for img in results.imgs:
+        for img in results.ims:
             img_base64 = Image.fromarray(img)
             predicted_images_folder = "static/predictions/" + curr_model + "/"
             if not os.path.exists(predicted_images_folder):
@@ -272,7 +284,7 @@ def request_model():
     if request.method == "POST":
         model_name = request.form['model_name']
         class_list = [line.rstrip() for line in list(filter(None, request.form['class_list'].split('\n')))]
-        pending_model_path = 'pending_models/' + model_name + '/'
+        pending_model_path = 'pending_models/' + model_name
         # Write starting yaml file
         num_training_images, num_validation_images = 0, 0
         if "file" in request.files and request.files["file"]:
@@ -280,9 +292,10 @@ def request_model():
             file_like_object = file.stream._file  
             zipfile_ob = zipfile.ZipFile(file_like_object)
             zipfile_ob.extractall(path=pending_model_path)
+        write_model_data_yaml(model_name, class_list, num_training_images, num_validation_images, is_pending=True)
         if s3_interaction:
             num_training_images, num_validation_images = upload_pending_model(models_bucket, pending_model_path)
-        write_model_data_yaml(model_name, class_list, num_training_images, num_validation_images, is_pending=True)
+            s3_client.upload_file(pending_model_path + '/' + model_name + '.yaml', models_bucket, pending_model_path + '/' + model_name + '.yaml')
         return render_template("request_model.html")
 
     return render_template("request_model.html")
@@ -295,7 +308,6 @@ def pending_models():
     num_training_images, num_validation_images = 0, 0
     if s3_interaction:
         get_models_from_s3(models_bucket, 'pending_models/')
-        num_training_images, num_validation_images = count_updated_dataset_size(s3_client, models_bucket, 'pending_models/' + curr_pending_model)
     if not os.path.exists('pending_models'):
         os.makedirs('pending_models')
     pending_models_list = os.listdir('pending_models')
@@ -304,6 +316,8 @@ def pending_models():
         return render_template("pending_models.html", no_pending_models=no_pending_models)
     curr_pending_model = pending_models_list[0].rsplit('.', 1)[0]
     class_list = read_model_data_yaml(curr_pending_model, is_pending=True)['names']
+    if s3_interaction:
+        num_training_images, num_validation_images = count_updated_dataset_size(s3_client, models_bucket, 'pending_models/' + curr_pending_model)
 
     if request.method == "POST":
         curr_pending_model = request.form['model_selection'].rsplit('.', 1)[0]
