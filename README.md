@@ -21,6 +21,10 @@ After drawing a bounding box thanks to JavaScript client-side code, the user is 
   <img src="https://user-images.githubusercontent.com/33027100/219945169-eb76e9a6-76e8-4a59-a246-f3e7e273e820.png">
 </p>
 
+## Customization score
+For each request, the server computes a customization score between 0 and 1 that can be interpreted as the **probability that the request is malicious**.
+The score is based on the validation Average Precision for each class, $AP_i$, and the distance between the customized bounding boxes and the predicted bounding boxes for each class, $IOUDist_i$.
+
 ### Requesting models
 Users can also request new models with the form in the request_model page: they need to specify the name of the model, the class list with the classes separated by new lines and optionally upload initial training data as a ZIP file.
 
@@ -35,7 +39,7 @@ Users can upload training data for pending models requested through the form by 
   <img src="https://user-images.githubusercontent.com/33027100/219945305-1bb075a1-0041-4a26-8cdf-4eddb1117a32.png">
 </p>
 
-after uploading the image, the user can then select the bounding boxes with their corresponding classes and send the training data, just like the pre-existing models with already available weights.
+After uploading the image, the user can then select the bounding boxes with their corresponding classes and send the training data, just like the pre-existing models with already available weights.
 
 <p align="center">
   <img src="https://user-images.githubusercontent.com/33027100/219945480-b5980bfd-7343-47cd-875c-466c0cef1ea9.png">
