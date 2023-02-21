@@ -8,7 +8,7 @@ The index page allows the user to choose a pre-existing YOLOv5 model, upload a J
   <img src="https://user-images.githubusercontent.com/33027100/219944849-452b1b76-8ef9-459a-8eb6-3b94fbbba9a3.png">
 </p>
 
-## Customizing labels
+### Customizing labels
 After looking at the image with the predicted bounding boxes, the user can decide to either send the predicted bounding boxes as training data to an S3 bucket or customize the bounding boxes and then send the training data.
 
 <p align="center">
@@ -21,7 +21,7 @@ After drawing a bounding box thanks to JavaScript client-side code, the user is 
   <img src="https://user-images.githubusercontent.com/33027100/219945169-eb76e9a6-76e8-4a59-a246-f3e7e273e820.png">
 </p>
 
-## Customization score
+#### Customization score
 For each request, the server computes a customization score between 0 and 1 that can be interpreted as the **probability that the request is malicious**.
 The score is based on the validation Average Precision for each class, $AP_i$, and the distance between the customized bounding boxes and the predicted bounding boxes for each class, $IOUDist_i$.
 
@@ -32,7 +32,7 @@ Users can also request new models with the form in the request_model page: they 
   <img src="https://user-images.githubusercontent.com/33027100/219944976-70420ce8-5ad2-4828-9aa5-9532be6a5aba.png">
 </p>
 
-## Uploading training data for pending models
+### Uploading training data for pending models
 Users can upload training data for pending models requested through the form by them or another user. The pending_models page displays the classes for each pending model and the current number of training and validation samples available on the S3 bucket.
 
 <p align="center">
