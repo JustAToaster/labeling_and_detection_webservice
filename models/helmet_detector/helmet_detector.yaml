@@ -1,0 +1,25 @@
+# Helmet dataset
+# Train command: python train.py --data helmet_dataset.yaml
+# Default dataset location is next to /yolov5:
+#   /parent_folder
+#     /helmet_dataset
+#     /yolov5
+
+
+# download command/URL (optional)
+# download: https://github.com/JustAToaster/ML_HelmetClassification/releases/download/v1.0/helmet_dataset.zip
+
+# train and val data as 1) directory: path/images/, 2) file: path/images.txt, or 3) list: [path1/images/, path2/images/]
+train: ./helmet_detector/images/train/
+val: ./helmet_detector/images/valid/
+
+# number of classes
+nc: 2
+
+# class names
+names: [ 'no helmet', 'helmet' ]
+
+training_set_size: 80
+validation_set_size: 20
+
+validation_APs: [ 1, 1 ]
