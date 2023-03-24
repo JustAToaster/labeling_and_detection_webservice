@@ -308,8 +308,6 @@ def pending_models():
     num_training_images, num_validation_images = 0, 0
     if s3_interaction:
         get_models_from_s3(models_bucket, 'pending_models/')
-    if not os.path.exists('pending_models'):
-        os.makedirs('pending_models')
     pending_models_list = os.listdir('pending_models')
     if not pending_models_list:
         no_pending_models = True
