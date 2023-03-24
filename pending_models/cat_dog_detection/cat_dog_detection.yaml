@@ -1,0 +1,9 @@
+names:
+- cat
+- dog
+nc: 2
+train: ./cat_dog_detection/images/train/
+training_set_size: 0
+val: ./cat_dog_detection/images/valid/
+validation_APs: []
+validation_set_size: 0
